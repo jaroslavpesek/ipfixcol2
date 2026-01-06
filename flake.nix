@@ -1,46 +1,54 @@
 {
-  description = "IPFIXCol2 Devel flake";
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
-  inputs.systems.url = "github:nix-systems/default";
-  inputs.netmonpkgs.url = "github:jaroslavpesek/netmonpkgs";
-  inputs.flake-utils = {
-    url = "github:numtide/flake-utils";
-    inputs.systems.follows = "systems";
+  description = "ipfixcol2 - IPFIX flow data collector";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    systems.url = "github:nix-systems/default";
+    netmonpkgs.url = "github:jaroslavpesek/netmonpkgs";
+    flake-utils = {
+      url = "github:numtide/flake-utils";
+      inputs.systems.follows = "systems";
+    };
   };
 
-  outputs =
-    { nixpkgs, flake-utils, netmonpkgs, ... }:
-    flake-utils.lib.eachDefaultSystem (
-      system:
+  outputs = { self, nixpkgs, flake-utils, netmonpkgs, ... }:
+    flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-      in
-      {
-        packages.default = pkgs.callPackage ./package.nix {
+        ipfixcol2 = pkgs.callPackage ./nix/package.nix {
           libfds = netmonpkgs.packages.${system}.libfds;
           nemea-framework = netmonpkgs.packages.${system}.nemea-framework;
         };
+      in
+      {
+        packages = {
+          default = ipfixcol2;
+          ipfixcol2 = ipfixcol2;
+        };
 
         devShells.default = pkgs.mkShell {
+          inputsFrom = [ ipfixcol2 ];
           packages = [
             pkgs.bashInteractive
             pkgs.nixd
             pkgs.nixpkgs-fmt
-            pkgs.cmake
             pkgs.gcc
-            pkgs.docutils
-            pkgs.libxml2
-            pkgs.zlib
-            pkgs.rdkafka
-            pkgs.lz4
-            netmonpkgs.packages.${system}.libfds
-            netmonpkgs.packages.${system}.nemea-framework
           ];
-        
-        shellHook = ''
-          echo "Welcome to IPFIXCol2 development environment 🔥"
-        '';
+          shellHook = ''
+            echo "Welcome to ipfixcol2 development environment."
+          '';
         };
+
+        formatter = pkgs.nixpkgs-fmt;
       }
-    );
+    ) // {
+      overlays.default = final: prev: {
+        ipfixcol2 = self.packages.${prev.system}.default;
+      };
+
+      nixosModules = {
+        default = import ./nix/module.nix;
+        ipfixcol2 = import ./nix/module.nix;
+      };
+    };
 }
