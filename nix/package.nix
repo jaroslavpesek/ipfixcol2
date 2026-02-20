@@ -27,7 +27,7 @@ stdenv.mkDerivation rec {
 
   postInstall = ''
     srcRoot=$(cd .. && pwd)
-    for plugin in unirec clickhouse protobuf-kafka; do
+    for plugin in unirec clickhouse protobuf-kafka protobuf-kafka-compiled; do
       echo "Building $plugin plugin..."
       cd "$srcRoot/extra_plugins/output/$plugin"
       mkdir -p build && cd build

@@ -1,0 +1,37 @@
+<ipfixcol2>
+  <!-- Input plugins -->
+  <inputPlugins>
+    <input>
+      <name>UDP collector</name>
+      <plugin>udp</plugin>
+      <params>
+        <localPort>4739</localPort>
+        <localIPAddress></localIPAddress>
+      </params>
+    </input>
+  </inputPlugins>
+
+  <!-- Output plugins -->
+  <outputPlugins>
+    <output>
+      <name>MyProtoKafka</name>
+      <plugin>protobuf-kafka-compiled</plugin>
+
+      <params>
+        <brokers>127.0.0.1:9092</brokers>
+        <topic>IPFlows</topic>
+        <partition>precomputed_rss</partition>
+        <batch_size>10000</batch_size>
+        <linger_ms>100</linger_ms>
+        <compression>lz4</compression>
+          <map>
+            <field ipfix="sourceIPv4Address" proto="SRC_IP"/>
+            <field ipfix="destinationIPv4Address" proto="DST_IP"/>
+            <field ipfix="protocolIdentifier" proto="PROTOCOL"/>
+            <field ipfix="octetDeltaCount" proto="BYTES"/>
+          </map>
+      </params>
+    </output>
+  </outputPlugins>
+</ipfixcol2>
+

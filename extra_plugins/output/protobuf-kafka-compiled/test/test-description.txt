@@ -1,0 +1,15 @@
+In folder test:
+1. Generate C++ schema (protoc --cpp_out=. schema) in folder "generated_schema" and python schema (protoc --python_out=. schema
+) in folder test.
+
+2. Build and install plugin (see Build & Installation).
+
+3. Start plugin (ipfixcol2 -c test.xml -vvv)
+
+4. Start kafka:
+sudo docker-compose up -d
+python3 kafka-test.py
+
+5. Send test IPFIX
+python3 send_ipfix.py
+Sent bytes should be seen in kafka-test.py
