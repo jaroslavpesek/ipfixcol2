@@ -1,8 +1,10 @@
 /**
- * \file Config.hpp
- * \brief Configuration parser for protobuf-kafka output plugin
- * \author Jaroslav Pesek
- * \date 2026
+ * @file Config.hpp
+ * @brief Configuration parser for protobuf-kafka output plugin
+ * @author Jaroslav Pesek
+ * @date 2026
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
 #ifndef PROTOBUF_KAFKA_CONFIG_HPP

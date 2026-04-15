@@ -1,8 +1,10 @@
 /**
- * \file FlowConverter.hpp
- * \brief To Protobuf converter for hot path
- * \author Jaroslav Pesek
- * \date 2026
+ * @file FlowConverter.hpp
+ * @brief IPFIX to Protobuf converter (hot path)
+ * @author Jaroslav Pesek
+ * @date 2026
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
 #ifndef PROTOBUF_KAFKA_FLOWCONVERTER_HPP
@@ -44,7 +46,8 @@ public:
     /**
      * \brief Create a converter
      *
-     * \param schema  Protobuf schema (must outlive this object)
+     * \param schema  Protobuf schema — schema info is pre-baked into the translation table;
+     *                this parameter is accepted for API symmetry but not accessed at runtime
      * \param table   Translation table (must outlive this object)
      * \param mode    Partition mode
      */

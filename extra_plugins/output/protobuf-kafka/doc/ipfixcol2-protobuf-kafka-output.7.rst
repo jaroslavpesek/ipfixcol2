@@ -2,7 +2,7 @@
 ipfixcol2-protobuf-kafka-output
 ==================================
 
-:Author: Generated
+:Author: Jaroslav Pesek
 :Date: 2026
 :Manual section: 7
 
@@ -28,25 +28,26 @@ The plugin accepts the following XML configuration:
 .. code-block:: xml
 
     <output>
-        <name>MyProtoKafka</name>
+        <name>Protobuf Kafka output</name>
         <plugin>protobuf-kafka</plugin>
         <params>
-            <brokers>127.0.0.1:9092</brokers>
-            <topic>network_flows</topic>
+            <brokers>kafka.example.com:9092</brokers>
+            <topic>flows</topic>
             <partition>rss</partition>
-            
             <batch_size>10000</batch_size>
             <linger_ms>100</linger_ms>
             <compression>lz4</compression>
-
             <proto_file>/etc/ipfixcol2/schemas/flow.proto</proto_file>
-            <message_type>Retina.FlowRecord</message_type>
-
+            <message_type>example.FlowRecord</message_type>
             <map>
-                <field ipfix="iana:sourceIPv4Address" proto="src_ip" />
-                <field ipfix="iana:destinationIPv4Address" proto="dst_ip" />
-                <field ipfix="iana:protocolIdentifier" proto="proto" />
-                <field ipfix="iana:octetDeltaCount" proto="bytes" />
+                <field ipfix="odid"                          proto="odid"     />
+                <field ipfix="iana:sourceIPv4Address"        proto="src_ip"   />
+                <field ipfix="iana:destinationIPv4Address"   proto="dst_ip"   />
+                <field ipfix="iana:sourceTransportPort"      proto="src_port" />
+                <field ipfix="iana:destinationTransportPort" proto="dst_port" />
+                <field ipfix="iana:protocolIdentifier"       proto="protocol" />
+                <field ipfix="iana:octetDeltaCount"          proto="bytes"    />
+                <field ipfix="iana:packetDeltaCount"         proto="packets"  />
             </map>
         </params>
     </output>
@@ -73,7 +74,7 @@ compression
     Kafka compression codec (default: lz4)
 
 blocking
-    Block when producer queue is full (default: false)
+    Block when producer queue is full instead of dropping messages (default: false)
 
 proto_file
     Path to .proto file defining the message schema (required)
@@ -96,6 +97,11 @@ ipfix
     - ``e<pen>id<id>`` (e.g., ``e0id8``)
     - ``<root>/<list_elem>`` for basicList element selection
       (e.g., ``e0id291/cesnet:packetLength``)
+
+    ``odid``
+        Special keyword (case-insensitive). The Observation Domain ID from the
+        IPFIX message header is written to the target protobuf field as a
+        ``uint32`` value. The recommended protobuf field type is ``uint32``.
 
 proto
     Protobuf field name in the target message

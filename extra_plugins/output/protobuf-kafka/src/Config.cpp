@@ -1,8 +1,10 @@
 /**
- * \file Config.cpp
- * \brief Configuration parser for protobuf-kafka output plugin
- * \author Jaroslav Pesek
- * \date 2026
+ * @file Config.cpp
+ * @brief Configuration parser for protobuf-kafka output plugin
+ * @author Jaroslav Pesek
+ * @date 2026
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
 #include "Config.hpp"
@@ -104,7 +106,7 @@ parse_numeric_ipfix_spec(const std::string& spec, uint32_t& pen, uint16_t& id)
         return false;
     }
 
-    if (end_ptr == nullptr || *end_ptr == '\0' || *(end_ptr + 1) == '\0') {
+    if (*end_ptr == '\0' || *(end_ptr + 1) == '\0') {
         return false;
     }
     if ((end_ptr[0] != 'i' && end_ptr[0] != 'I') ||

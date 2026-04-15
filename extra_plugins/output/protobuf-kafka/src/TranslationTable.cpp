@@ -1,8 +1,10 @@
 /**
- * \file TranslationTable.cpp
- * \brief Pre-computed IPFIX to Protobuf field mapping table
- * \author Generated
- * \date 2026
+ * @file TranslationTable.cpp
+ * @brief Pre-computed IPFIX to Protobuf field mapping table
+ * @author Jaroslav Pesek
+ * @date 2026
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
 #include "TranslationTable.hpp"
@@ -193,6 +195,12 @@ TranslationTable::build(const std::vector<FieldMapping>& mappings,
         const uint64_t tag_value = (static_cast<uint64_t>(entry.proto_number) << 3U) |
             static_cast<uint64_t>(entry.field_wire_type);
         entry.tag_len = encodeVarint(tag_value, entry.tag_bytes.data());
+
+        if (!mapping.is_list && fd->is_repeated()) {
+            IPX_CTX_WARNING(ctx, "Mapping '%s' maps a scalar IPFIX field to repeated proto field '%s'; "
+                            "each record will emit one repeated element",
+                            mapping.ipfix_spec.c_str(), mapping.proto_name.c_str());
+        }
 
         const uint32_t index = static_cast<uint32_t>(m_entries.size());
         m_entries.push_back(entry);

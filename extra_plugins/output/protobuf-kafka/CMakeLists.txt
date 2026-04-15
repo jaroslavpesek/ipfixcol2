@@ -90,7 +90,6 @@ target_link_libraries(protobuf-kafka-output
     ${LIBRDKAFKA_LIBRARIES}
     ${Protobuf_LIBRARIES}
     ${XXHASH_LIBRARIES}
-    protobuf
 )
 
 install(

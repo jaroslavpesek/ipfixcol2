@@ -1,8 +1,10 @@
 /**
- * \file ProtoSchema.cpp
- * \brief Dynamic protobuf schema loading using reflection
- * \author Jaroslav Pesek
- * \date 2026
+ * @file ProtoSchema.cpp
+ * @brief Dynamic protobuf schema loading using reflection
+ * @author Jaroslav Pesek
+ * @date 2026
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
 #include "ProtoSchema.hpp"

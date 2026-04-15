@@ -1,11 +1,13 @@
 /**
- * \file plugin.cpp
- * \brief IPFIXcol2 protobuf-kafka output plugin
- * \author Jaroslav Pesek
- * \date 2026
+ * @file plugin.cpp
+ * @brief IPFIXcol2 protobuf-kafka output plugin
+ * @author Jaroslav Pesek
+ * @date 2026
  *
  * This plugin serializes IPFIX flow records into Protocol Buffers and sends
  * them to a Kafka topic. It uses dynamic schema loading.
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
 #include <ipfixcol2.h>

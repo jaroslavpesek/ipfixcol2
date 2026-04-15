@@ -1,8 +1,10 @@
 /**
- * \file KafkaProducer.cpp
- * \brief Kafka producer wrapper
- * \author Jaroslav Pesek
- * \date 2026
+ * @file KafkaProducer.cpp
+ * @brief Kafka producer wrapper
+ * @author Jaroslav Pesek
+ * @date 2026
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
 #include "KafkaProducer.hpp"

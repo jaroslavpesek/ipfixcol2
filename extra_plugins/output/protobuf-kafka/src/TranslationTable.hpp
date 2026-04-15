@@ -1,8 +1,10 @@
 /**
- * \file TranslationTable.hpp
- * \brief Pre-computed IPFIX to Protobuf field mapping table
- * \author Jaroslav Pesek
- * \date 2026
+ * @file TranslationTable.hpp
+ * @brief Pre-computed IPFIX to Protobuf field mapping table
+ * @author Jaroslav Pesek
+ * @date 2026
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
 #ifndef PROTOBUF_KAFKA_TRANSLATIONTABLE_HPP

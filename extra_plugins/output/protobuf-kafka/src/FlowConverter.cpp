@@ -1,13 +1,16 @@
 /**
- * \file FlowConverter.cpp
- * \brief To Protobuf converter
- * \author Jaroslav Pesek
- * \date 2026
+ * @file FlowConverter.cpp
+ * @brief IPFIX to Protobuf converter (hot path)
+ * @author Jaroslav Pesek
+ * @date 2026
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
 #include "FlowConverter.hpp"
 
 #include <arpa/inet.h>
+#include <endian.h>
 #include <cstring>
 
 namespace protobuf_kafka {
@@ -32,6 +35,12 @@ sanitizeUtf8(const uint8_t* data, size_t size, std::string& out)
     size_t i = 0;
     while (i < size) {
         const uint8_t c0 = data[i];
+        if (c0 == 0x00U) {
+            // NUL bytes are invalid in protobuf string fields; skip them
+            // (IPFIX fixed-length strings are often NUL-padded)
+            ++i;
+            continue;
+        }
         if (c0 <= 0x7FU) {
             out.push_back(static_cast<char>(c0));
             ++i;
@@ -139,7 +148,7 @@ FlowConverter::FlowConverter(ProtoSchema& schema,
     : m_table(table)
     , m_partition_mode(mode)
 {
-    (void)schema;
+    (void)schema; // schema info is pre-baked into table entries; not needed on the hot path
     m_buffer.reserve(4096);
     m_tmp_utf8.reserve(256);
     m_tmp_packed.reserve(512);
@@ -189,6 +198,10 @@ FlowConverter::convert(const fds_drec* rec,
 
         const FieldEntry* entry = m_table.lookup(key);
         if (!entry && key.has_list_elem) {
+            // No list-element mapping found; fall back to scalar lookup for the root IE.
+            // A duplicate-key conflict (scalar + list for the same root) is rejected at build
+            // time, so this can only match if the root IE is mapped as a plain scalar but
+            // the data happens to arrive wrapped in a basicList.
             key.has_list_elem = false;
             key.list_pen = 0;
             key.list_id = 0;
@@ -209,6 +222,7 @@ FlowConverter::convert(const fds_drec* rec,
         }
     }
 
+    // Populate the partition key for RSS mode
     if (need_partition_key) {
         pk_local.valid = pk_local.has_flow_id ||
             (pk_local.src_ip != nullptr || pk_local.dst_ip != nullptr);
@@ -219,6 +233,10 @@ FlowConverter::convert(const fds_drec* rec,
     const uint32_t be_odid = htonl(odid);
     for (const auto& entry : m_table.odid_entries()) {
         appendValue(entry, reinterpret_cast<const uint8_t*>(&be_odid), sizeof(be_odid), m_buffer, true);
+    }
+
+    if (m_buffer.empty()) {
+        return false;
     }
 
     *out_data = m_buffer.data();
@@ -323,10 +341,10 @@ FlowConverter::appendValue(const FieldEntry& entry,
             return true;
         }
         {
-            double value = 0;
+            // IPFIX uses big-endian (network) byte order; protobuf fixed64 uses little-endian
             uint64_t bits = 0;
-            std::memcpy(&value, data, sizeof(value));
-            std::memcpy(&bits, &value, sizeof(bits));
+            std::memcpy(&bits, data, sizeof(bits));
+            bits = be64toh(bits);
             appendTagIfNeeded();
             appendFixed64(out, bits);
             return true;
@@ -337,10 +355,10 @@ FlowConverter::appendValue(const FieldEntry& entry,
             return true;
         }
         {
-            float value = 0;
+            // IPFIX uses big-endian (network) byte order; protobuf fixed32 uses little-endian
             uint32_t bits = 0;
-            std::memcpy(&value, data, sizeof(value));
-            std::memcpy(&bits, &value, sizeof(bits));
+            std::memcpy(&bits, data, sizeof(bits));
+            bits = ntohl(bits);
             appendTagIfNeeded();
             appendFixed32(out, bits);
             return true;

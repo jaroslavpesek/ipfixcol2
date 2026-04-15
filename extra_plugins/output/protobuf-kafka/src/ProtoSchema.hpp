@@ -1,8 +1,10 @@
 /**
- * \file ProtoSchema.hpp
- * \brief Dynamic protobuf schema loading using reflection
- * \author Jaroslav Pesek
- * \date 2026
+ * @file ProtoSchema.hpp
+ * @brief Dynamic protobuf schema loading using reflection
+ * @author Jaroslav Pesek
+ * @date 2026
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
 #ifndef PROTOBUF_KAFKA_PROTOSCHEMA_HPP
