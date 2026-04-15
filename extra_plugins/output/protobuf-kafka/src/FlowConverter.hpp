@@ -66,12 +66,14 @@ public:
      * \param[out] out_data       Pointer to serialized data
      * \param[out] out_len        Length of serialized data
      * \param[out] partition_key  Partition key for RSS (if mode is RSS)
+     * \param[in]  odid           Observation Domain ID from message context
      * \return true on success, false if conversion failed
      */
     bool convert(const fds_drec* rec,
                  const char** out_data,
                  size_t* out_len,
-                 PartitionKey* partition_key);
+                 PartitionKey* partition_key,
+                 uint32_t odid);
 
 private:
     const TranslationTable& m_table;

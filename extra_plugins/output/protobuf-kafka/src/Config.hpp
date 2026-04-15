@@ -34,6 +34,7 @@ struct FieldMapping {
     bool is_list = false;       ///< True when mapping points to a basicList element
     uint32_t list_pen = 0;      ///< basicList element PEN (valid when is_list=true)
     uint16_t list_id = 0;       ///< basicList element IE ID (valid when is_list=true)
+    bool is_odid = false;       ///< True when field is filled from ODID (not IPFIX data)
     std::string proto_name;  ///< Protobuf field name
     std::string ipfix_spec;  ///< Original IPFIX specification (for error messages)
 };

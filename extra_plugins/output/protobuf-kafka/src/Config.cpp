@@ -230,6 +230,13 @@ parse_field(fds_xml_ctx_t* ctx, const fds_iemgr_t* iemgr)
         throw std::runtime_error("<field> missing 'proto' attribute");
     }
 
+    // Special keyword: "odid" maps to Observation Domain ID from message context
+    if (strcasecmp(trim_copy(ipfix_spec).c_str(), "odid") == 0) {
+        mapping.is_odid = true;
+        mapping.ipfix_spec = "odid";
+        return mapping;
+    }
+
     if (!parse_ipfix_spec(ipfix_spec, iemgr, mapping)) {
         throw std::runtime_error("Unknown or invalid IPFIX element specification: " + ipfix_spec);
     }

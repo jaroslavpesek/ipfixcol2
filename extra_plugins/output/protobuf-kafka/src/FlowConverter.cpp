@@ -151,7 +151,8 @@ bool
 FlowConverter::convert(const fds_drec* rec,
                        const char** out_data,
                        size_t* out_len,
-                       PartitionKey* partition_key)
+                       PartitionKey* partition_key,
+                       uint32_t odid)
 {
     m_buffer.clear();
 
@@ -212,6 +213,12 @@ FlowConverter::convert(const fds_drec* rec,
         pk_local.valid = pk_local.has_flow_id ||
             (pk_local.src_ip != nullptr || pk_local.dst_ip != nullptr);
         *partition_key = pk_local;
+    }
+
+    // Emit ODID fields (filled from message context, not IPFIX data)
+    const uint32_t be_odid = htonl(odid);
+    for (const auto& entry : m_table.odid_entries()) {
+        appendValue(entry, reinterpret_cast<const uint8_t*>(&be_odid), sizeof(be_odid), m_buffer, true);
     }
 
     *out_data = m_buffer.data();

@@ -29,6 +29,7 @@ struct FieldEntry {
     std::string proto_name;                       ///< Field name (for debugging)
     std::string ipfix_spec;                       ///< Original IPFIX specification
     bool is_list = false;                         ///< True when mapping from basicList element
+    bool is_odid = false;                         ///< True when value comes from ODID (not IPFIX data)
     fds_iemgr_element_type ipfix_type;            ///< Value element type (root for scalar, child for list)
     uint32_t proto_number = 0;                    ///< Protobuf field number
     google::protobuf::FieldDescriptor::Type proto_type =
@@ -136,6 +137,12 @@ public:
      */
     const std::vector<FieldEntry>& entries() const { return m_entries; }
 
+    /**
+     * \brief Get ODID field entries (emitted once per message with the ODID value)
+     * \return Vector of ODID field entries
+     */
+    const std::vector<FieldEntry>& odid_entries() const { return m_odid_entries; }
+
 private:
     struct LookupRecord {
         MappingKey key;
@@ -143,6 +150,7 @@ private:
     };
 
     std::vector<FieldEntry> m_entries;
+    std::vector<FieldEntry> m_odid_entries;
     std::vector<LookupRecord> m_lookup_sorted;
     std::vector<int32_t> m_iana_scalar_direct;
 };

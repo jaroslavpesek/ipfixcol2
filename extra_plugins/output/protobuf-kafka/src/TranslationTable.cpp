@@ -72,6 +72,7 @@ TranslationTable::build(const std::vector<FieldMapping>& mappings,
                         ipx_ctx_t* ctx)
 {
     m_entries.clear();
+    m_odid_entries.clear();
     m_lookup_sorted.clear();
     m_iana_scalar_direct.assign(UINT16_MAX + 1U, -1);
 
@@ -80,6 +81,44 @@ TranslationTable::build(const std::vector<FieldMapping>& mappings,
     index_map.reserve(mappings.size());
 
     for (const auto& mapping : mappings) {
+        // ODID is a special field filled from the message context, not from IPFIX data
+        if (mapping.is_odid) {
+            const google::protobuf::FieldDescriptor* fd = schema.findField(mapping.proto_name);
+            if (!fd) {
+                throw std::runtime_error(
+                    "Protobuf field '" + mapping.proto_name + "' not found in message type");
+            }
+            FieldEntry entry;
+            entry.fd = fd;
+            entry.is_odid = true;
+            entry.proto_name = mapping.proto_name;
+            entry.ipfix_spec = "odid";
+            entry.is_list = false;
+            entry.ipfix_type = FDS_ET_UNSIGNED_32;
+            entry.proto_number = static_cast<uint32_t>(fd->number());
+            entry.proto_type = fd->type();
+            entry.proto_repeated = fd->is_repeated();
+            entry.proto_packed = fd->is_packable() && fd->is_packed();
+            entry.oneof_index = fd->containing_oneof() ? fd->containing_oneof()->index() : -1;
+            entry.source_is_ip_address = false;
+            entry.element_wire_type = protoTypeToWireType(fd->type());
+            entry.field_wire_type = entry.proto_packed
+                ? FieldEntry::WireType::LENGTH_DELIMITED
+                : entry.element_wire_type;
+            if (entry.field_wire_type == FieldEntry::WireType::INVALID ||
+                entry.element_wire_type == FieldEntry::WireType::INVALID) {
+                throw std::runtime_error(
+                    "Unsupported protobuf field type for ODID field '" + mapping.proto_name + "'");
+            }
+            const uint64_t tag_value = (static_cast<uint64_t>(entry.proto_number) << 3U) |
+                static_cast<uint64_t>(entry.field_wire_type);
+            entry.tag_len = encodeVarint(tag_value, entry.tag_bytes.data());
+            m_odid_entries.push_back(entry);
+            IPX_CTX_DEBUG(ctx, "ODID mapping: odid -> %s (proto type=%d)",
+                          mapping.proto_name.c_str(), static_cast<int>(fd->type()));
+            continue;
+        }
+
         const google::protobuf::FieldDescriptor* fd =
             schema.findField(mapping.proto_name);
 

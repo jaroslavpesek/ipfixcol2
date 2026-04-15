@@ -55,7 +55,7 @@ computePartition(const PluginContext& data, const protobuf_kafka::PartitionKey& 
 }
 
 static void
-processRecord(PluginContext& data, struct ipx_ipfix_record* rec)
+processRecord(PluginContext& data, struct ipx_ipfix_record* rec, uint32_t odid)
 {
     if (!rec || rec->rec.tmplt == nullptr || rec->rec.tmplt->type == FDS_TYPE_TEMPLATE_OPTS) {
         return;
@@ -65,7 +65,7 @@ processRecord(PluginContext& data, struct ipx_ipfix_record* rec)
     size_t len = 0;
     protobuf_kafka::PartitionKey key{};
 
-    if (!data.converter->convert(&rec->rec, &buf, &len, &key)) {
+    if (!data.converter->convert(&rec->rec, &buf, &len, &key, odid)) {
         return;
     }
 
@@ -164,10 +164,11 @@ ipx_plugin_process(ipx_ctx_t* ctx, void* cfg, ipx_msg_t* msg)
     auto* data = static_cast<PluginContext*>(cfg);
     ipx_msg_ipfix_t* ipfix_msg = ipx_msg_base2ipfix(msg);
 
+    const uint32_t odid = ipx_msg_ipfix_get_ctx(ipfix_msg)->odid;
     const uint32_t rec_cnt = ipx_msg_ipfix_get_drec_cnt(ipfix_msg);
     for (uint32_t i = 0; i < rec_cnt; ++i) {
         struct ipx_ipfix_record* rec = ipx_msg_ipfix_get_drec(ipfix_msg, i);
-        processRecord(*data, rec);
+        processRecord(*data, rec, odid);
     }
 
     return IPX_OK;
