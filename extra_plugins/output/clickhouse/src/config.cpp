@@ -41,13 +41,15 @@ enum {
     SPLIT_BIFLOW,
     BIFLOW_EMPTY_AUTOIGNORE,
     NONBLOCKING,
+    INNER_SOURCE,
 };
 
 
 static const struct fds_xml_args column[] = {
-    FDS_OPTS_ELEM(NAME,     "name",     FDS_OPTS_T_STRING, 0),
-    FDS_OPTS_ELEM(SOURCE,   "source",   FDS_OPTS_T_STRING, FDS_OPTS_P_OPT),
-    FDS_OPTS_ELEM(NULLABLE, "nullable", FDS_OPTS_T_BOOL,   FDS_OPTS_P_OPT),
+    FDS_OPTS_ELEM(NAME,         "name",        FDS_OPTS_T_STRING, 0),
+    FDS_OPTS_ELEM(SOURCE,       "source",      FDS_OPTS_T_STRING, FDS_OPTS_P_OPT),
+    FDS_OPTS_ELEM(NULLABLE,     "nullable",    FDS_OPTS_T_BOOL,   FDS_OPTS_P_OPT),
+    FDS_OPTS_ELEM(INNER_SOURCE, "innerSource", FDS_OPTS_T_STRING, FDS_OPTS_P_OPT),
     FDS_OPTS_END,
 };
 
@@ -105,6 +107,7 @@ static Config::Column parse_column(fds_xml_ctx_t *column_ctx, const fds_iemgr_t 
     const fds_xml_cont *content;
     Config::Column column;
     std::string source;
+    std::string inner_source;
 
     while (fds_xml_next(column_ctx, &content) == FDS_OK) {
         if (content->id == args::NAME) {
@@ -113,6 +116,8 @@ static Config::Column parse_column(fds_xml_ctx_t *column_ctx, const fds_iemgr_t 
             column.nullable = content->val_bool;
         } else if (content->id == args::SOURCE) {
             source = content->ptr_string;
+        } else if (content->id == args::INNER_SOURCE) {
+            inner_source = content->ptr_string;
         }
     }
 
@@ -131,6 +136,18 @@ static Config::Column parse_column(fds_xml_ctx_t *column_ctx, const fds_iemgr_t 
         column.source = alias;
     } else if (elem) {
         column.source = elem;
+    }
+
+    if (!inner_source.empty()) {
+        column.inner_elem = fds_iemgr_elem_find_name(iemgr, inner_source.c_str());
+        if (!column.inner_elem) {
+            throw std::runtime_error("innerSource element \"" + inner_source + "\" not found");
+        }
+        if (column.inner_elem->data_type == FDS_ET_BASIC_LIST ||
+            column.inner_elem->data_type == FDS_ET_SUB_TEMPLATE_LIST ||
+            column.inner_elem->data_type == FDS_ET_SUB_TEMPLATE_MULTILIST) {
+            throw std::runtime_error("innerSource element \"" + inner_source + "\" cannot itself be a list type");
+        }
     }
 
     return column;

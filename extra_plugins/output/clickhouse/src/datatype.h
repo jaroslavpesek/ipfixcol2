@@ -150,10 +150,11 @@ DataType type_from_ipfix(fds_iemgr_element_type type);
  * @brief Get ClickHouse data type for the intermediary data type
  *
  * @param type The intermediary data type
- * @param nullable Whether the type is nullable or not
- * @return The ClickHouse data type
+ * @param nullable Whether the type (or its elements for lists) is nullable
+ * @param is_list Whether the column is an Array(T) type
+ * @return The ClickHouse data type string
  */
-std::string type_to_clickhouse(DataType type, bool nullable);
+std::string type_to_clickhouse(DataType type, bool nullable, bool is_list = false);
 
 /**
  * @brief Find an intermediary data type that can be used to store all the possible data types of the alias
@@ -184,11 +185,12 @@ using ValueVariant = std::variant<
 /**
  * @brief Make a ClickHouse column that is able to store values of the supplied data type
  *
- * @param type The data type
- * @param nullable Whether the type is nullable or not
+ * @param type The data type (inner element type for list columns)
+ * @param nullable Whether the type (or inner elements for lists) is nullable
+ * @param is_list Whether to create an Array(T) column
  * @return The ClickHouse column object
  */
-std::shared_ptr<clickhouse::Column> make_column(DataType type, bool nullable);
+std::shared_ptr<clickhouse::Column> make_column(DataType type, bool nullable, bool is_list = false);
 
 /**
  * @brief An error thrown when the conversion from IPFIX to ClickHouse representation fails.
@@ -218,3 +220,24 @@ ValueVariant get_value(DataType type, fds_drec_field& field);
  * @param value A pointer to the value to be written.
  */
 void write_to_column(DataType type, bool nullable, clickhouse::Column& column, ValueVariant* value);
+
+/**
+ * Iterates an IPFIX basicList field and appends all values as one Array row.
+ *
+ * @param elem_type The expected element type of list items.
+ * @param nullable Whether list elements are nullable (Array(Nullable(T))).
+ * @param field The raw basicList field from the IPFIX record.
+ * @param column The ClickHouse Array column to append the row to.
+ * @param iemgr IE manager used to resolve inner element definitions (may be NULL).
+ */
+void write_list_to_column(DataType elem_type, bool nullable, fds_drec_field& field,
+                           clickhouse::Column& column, const fds_iemgr_t *iemgr);
+
+/**
+ * Appends an empty array row to an Array column (used when the field is absent).
+ *
+ * @param elem_type The element type of the array.
+ * @param nullable Whether list elements are nullable.
+ * @param column The ClickHouse Array column.
+ */
+void write_empty_list_to_column(DataType elem_type, bool nullable, clickhouse::Column& column);

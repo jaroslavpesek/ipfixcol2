@@ -51,7 +51,7 @@ static void ensure_schema(clickhouse::Client &client, const std::string &table, 
         ss << "CREATE TABLE " << table << "(\n";
         size_t i = 0;
         for (const auto& column : columns) {
-            const auto &clickhouse_type = type_to_clickhouse(columns[i].datatype, columns[i].nullable);
+            const auto &clickhouse_type = type_to_clickhouse(columns[i].datatype, columns[i].nullable, columns[i].is_list);
             ss << "    \"" << column.name << "\" " << clickhouse_type << (i < columns.size()-1 ? "," : "") << '\n';
             i++;
         }
@@ -65,7 +65,7 @@ static void ensure_schema(clickhouse::Client &client, const std::string &table, 
 
     for (size_t i = 0; i < db_columns.size(); i++) {
         const auto &expected_name = columns[i].name;
-        const auto &expected_type = type_to_clickhouse(columns[i].datatype, columns[i].nullable);
+        const auto &expected_type = type_to_clickhouse(columns[i].datatype, columns[i].nullable, columns[i].is_list);
         const auto &[actual_name, actual_type] = db_columns[i];
 
         if (expected_name != actual_name) {

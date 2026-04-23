@@ -25,7 +25,17 @@ static std::vector<Column> prepare_columns(std::vector<Config::Column> &columns_
 
         if (std::holds_alternative<const fds_iemgr_elem *>(column_cfg.source)) {
             const fds_iemgr_elem *elem = std::get<const fds_iemgr_elem *>(column_cfg.source);
-            type = type_from_ipfix(elem->data_type);
+
+            if (elem->data_type == FDS_ET_BASIC_LIST) {
+                if (!column_cfg.inner_elem) {
+                    throw Error("column \"{}\" source is a basicList element but <innerSource> is not specified", column_cfg.name);
+                }
+                type = type_from_ipfix(column_cfg.inner_elem->data_type);
+                column.is_list = true;
+            } else {
+                type = type_from_ipfix(elem->data_type);
+            }
+
             column.elem = elem;
 
         } else if (std::holds_alternative<const fds_iemgr_alias *>(column_cfg.source)) {
@@ -62,7 +72,8 @@ Plugin::Plugin(ipx_ctx_t *ctx, const char *xml_config)
     }
 
     // Parse config
-    m_config = parse_config(xml_config, ipx_ctx_iemgr_get(ctx));
+    m_iemgr = ipx_ctx_iemgr_get(ctx);
+    m_config = parse_config(xml_config, m_iemgr);
 
     std::vector<clickhouse::Endpoint> endpoints;
     for (const Config::Endpoint &endpoint_cfg : m_config.connection.endpoints) {
@@ -76,7 +87,7 @@ Plugin::Plugin(ipx_ctx_t *ctx, const char *xml_config)
     for (unsigned int i = 0; i < m_config.blocks; i++) {
         std::unique_ptr<Block> blk = std::make_unique<Block>();
         for (const auto &column : m_columns) {
-            blk->columns.emplace_back(make_column(column.datatype, column.nullable));
+            blk->columns.emplace_back(make_column(column.datatype, column.nullable, column.is_list));
             blk->block.AppendColumn(column.name, blk->columns.back());
         }
         m_blocks.emplace_back(std::move(blk));
@@ -118,6 +129,25 @@ void Plugin::extract_values(ipx_msg_ipfix_t *msg, RecParser &parser, Block &bloc
     ValueVariant value;
 
     for (std::size_t i = 0; i < n_columns; i++) {
+        if (m_columns[i].is_list) {
+            fds_drec_field &field = parser.get_column(i, rev);
+            if (field.data != nullptr) {
+                try {
+                    write_list_to_column(m_columns[i].datatype, m_columns[i].nullable,
+                                         field, *block.columns[i].get(), m_iemgr);
+                } catch (const ConversionError& err) {
+                    m_logger.error("List field conversion failed (field #%zu, \"%s\"): %s",
+                                   i, m_columns[i].name.c_str(), err.what());
+                    write_empty_list_to_column(m_columns[i].datatype, m_columns[i].nullable,
+                                               *block.columns[i].get());
+                }
+            } else {
+                write_empty_list_to_column(m_columns[i].datatype, m_columns[i].nullable,
+                                           *block.columns[i].get());
+            }
+            continue;
+        }
+
         has_value = false;
 
         if (m_columns[i].special == SpecialField::ODID) {
@@ -131,7 +161,8 @@ void Plugin::extract_values(ipx_msg_ipfix_t *msg, RecParser &parser, Block &bloc
                     value = get_value(m_columns[i].datatype, field);
                     has_value = true;
                 } catch (const ConversionError& err) {
-                    m_logger.error("Field conversion failed (field #%d, \"%s\"): %s", i, m_columns[i].name, err.what());
+                    m_logger.error("Field conversion failed (field #%zu, \"%s\"): %s",
+                                   i, m_columns[i].name.c_str(), err.what());
                 }
             }
         }

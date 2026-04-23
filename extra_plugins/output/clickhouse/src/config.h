@@ -31,6 +31,7 @@ struct Config {
         std::string name;
         bool nullable = false;
         std::variant<const fds_iemgr_elem *, const fds_iemgr_alias *, SpecialField> source;
+        const fds_iemgr_elem *inner_elem = nullptr; // for basicList: the inner element type
     };
 
     struct Endpoint {

@@ -55,6 +55,7 @@ private:
 
     Logger m_logger;
     Config m_config;
+    const fds_iemgr_t *m_iemgr = nullptr;
     std::vector<Column> m_columns;
 
     std::vector<std::unique_ptr<Block>> m_blocks;

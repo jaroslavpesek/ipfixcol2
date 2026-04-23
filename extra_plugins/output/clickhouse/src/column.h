@@ -23,6 +23,7 @@
 struct Column {
     std::string name;
     DataType datatype;
+    bool is_list = false;
     bool nullable;
 
     const fds_iemgr_elem *elem = nullptr;

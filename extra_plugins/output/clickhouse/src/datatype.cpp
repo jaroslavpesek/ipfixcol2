@@ -227,10 +227,18 @@ static FloatType get_float(fds_drec_field field)
 }
 }
 
-std::string type_to_clickhouse(DataType type, bool nullable)
+std::string type_to_clickhouse(DataType type, bool nullable, bool is_list)
 {
+    if (is_list) {
+        std::string inner = type_to_clickhouse(type, false, false);
+        if (nullable) {
+            return "Array(Nullable(" + inner + "))";
+        }
+        return "Array(" + inner + ")";
+    }
+
     if (nullable) {
-        return "Nullable(" + type_to_clickhouse(type, false) + ")";
+        return "Nullable(" + type_to_clickhouse(type, false, false) + ")";
     }
 
     switch (type) {
@@ -260,8 +268,14 @@ std::string type_to_clickhouse(DataType type, bool nullable)
     throw std::logic_error("unexpected datatype value");
 }
 
-std::shared_ptr<clickhouse::Column> make_column(DataType type, bool nullable)
+std::shared_ptr<clickhouse::Column> make_column(DataType type, bool nullable, bool is_list)
 {
+    if (is_list) {
+        // Array(T) or Array(Nullable(T)): build a ColumnArray wrapping the inner column type
+        auto inner_col = make_column(type, nullable, false);
+        return std::make_shared<clickhouse::ColumnArray>(inner_col);
+    }
+
     if (nullable) {
         switch (type) {
         case DataType::UInt8:             return std::make_shared<clickhouse::ColumnNullableT<clickhouse::ColumnUInt8>>();
@@ -411,4 +425,48 @@ void write_to_column(DataType type, bool nullable, clickhouse::Column& column, V
     }
 
     throw std::logic_error("unexpected datatype value");
+}
+
+static bool needs_def_ptr(DataType type)
+{
+    return type == DataType::DatetimeSecs
+        || type == DataType::DatetimeMillisecs
+        || type == DataType::DatetimeMicrosecs
+        || type == DataType::DatetimeNanosecs;
+}
+
+void write_list_to_column(DataType elem_type, bool nullable, fds_drec_field& field,
+                           clickhouse::Column& column, const fds_iemgr_t *iemgr)
+{
+    auto &arr_col = dynamic_cast<clickhouse::ColumnArray &>(column);
+    auto inner_col = make_column(elem_type, nullable, false);
+
+    fds_blist_iter iter;
+    fds_blist_iter_init(&iter, &field, iemgr);
+
+    int rc;
+    while ((rc = fds_blist_iter_next(&iter)) == FDS_OK) {
+        try {
+            if (needs_def_ptr(elem_type) && iter.field.info->def == nullptr) {
+                throw ConversionError("datetime inner element definition not found in IE manager");
+            }
+            ValueVariant val = get_value(elem_type, iter.field);
+            write_to_column(elem_type, nullable, *inner_col, &val);
+        } catch (const ConversionError &) {
+            write_to_column(elem_type, nullable, *inner_col, nullptr);
+        }
+    }
+
+    if (rc != FDS_EOC) {
+        throw ConversionError(fmt::format("basicList parse error: {}", fds_blist_iter_err(&iter)));
+    }
+
+    arr_col.AppendAsColumn(inner_col);
+}
+
+void write_empty_list_to_column(DataType elem_type, bool nullable, clickhouse::Column& column)
+{
+    auto &arr_col = dynamic_cast<clickhouse::ColumnArray &>(column);
+    auto empty_inner = make_column(elem_type, nullable, false);
+    arr_col.AppendAsColumn(empty_inner);
 }

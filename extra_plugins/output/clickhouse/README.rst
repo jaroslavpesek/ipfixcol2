@@ -111,6 +111,15 @@ The following ClickHouse column types are expected to store the following IPFIX 
       - DateTime
     * - string
       - String
+    * - basicList
+      - Array(T) where T is the inner element type
+
+For ``basicList`` elements, the inner element type must be declared via the
+``<innerSource>`` configuration option (see `Parameters`_). The inner element
+may be any scalar IPFIX type. The resulting ClickHouse column type is
+``Array(T)`` or ``Array(Nullable(T))`` depending on the ``nullable`` setting.
+When a ``basicList`` field is absent from a record, an empty array ``[]`` is
+stored.
 
 In case the field is an alias mapping to multiple IPFIX elements of compatible
 types, the resulting type is unified to the type with higher precision, i.e.
@@ -200,6 +209,12 @@ Example configuration
                 </column>
                 <column>
                     <name>packetDeltaCount</name>
+                </column>
+                <column>
+                    <!-- basicList field stored as Array(UInt32) in ClickHouse -->
+                    <name>mplsLabels</name>
+                    <source>iana:mplsTopLabelStackSection</source>
+                    <innerSource>iana:mplsLabel</innerSource>
                 </column>
             </columns>
         </params>
@@ -297,6 +312,16 @@ Parameters
             List of standard IPFIX element names can be also found
             `here <https://www.iana.org/assignments/ipfix/ipfix.xhtml>`_.
             [default: same as name]
+
+        :``innerSource``:
+            Required when ``source`` is an IPFIX element of type ``basicList``.
+            Specifies the name of the IPFIX element whose type describes the
+            items contained in the list. The column will be stored as
+            ``Array(T)`` in ClickHouse, where ``T`` is the type of the inner
+            element. When ``nullable`` is true, the column type is
+            ``Array(Nullable(T))`` — individual list elements may be null, but
+            the array itself is never null (an absent field stores an empty
+            array ``[]``). Must not itself be a list type.
 
 Performance tuning
 ------------------
