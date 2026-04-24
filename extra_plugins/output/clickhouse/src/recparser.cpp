@@ -10,6 +10,7 @@
 
 #include "recparser.h"
 
+#include <arpa/inet.h>
 #include <cassert>
 
 static int index_of_elem(const fds_iemgr_elem &elem, const fds_template &tmplt, bool rev)
@@ -82,6 +83,18 @@ RecParser::RecParser(const std::vector<Column> &columns, const fds_template *tmp
         int field_idx = -1;
         int rev_field_idx = -1;
 
+        // basicList columns with inner_elem cannot be disambiguated at template-setup time
+        // because all basicList IEs share (en=0, id=291). Use runtime header inspection
+        // in parse_record via m_blist_columns instead.
+        if (column.is_list && column.inner_elem) {
+            m_blist_columns.push_back({column.inner_elem->scope->pen, column.inner_elem->id, (int)column_idx});
+            if (m_biflow) {
+                m_blist_columns_rev.push_back({column.inner_elem->scope->pen, column.inner_elem->id, (int)column_idx});
+            }
+            column_idx++;
+            continue;
+        }
+
         if (column.elem) {
             field_idx = index_of_elem(*column.elem, *tmplt, false);
             rev_field_idx = index_of_elem(*column.elem, *tmplt, true);
@@ -148,6 +161,37 @@ void RecParser::parse_record(fds_drec &rec)
         int rev_field_idx = m_mapping_rev[i];
         if (rev_field_idx != -1) {
             m_fields_rev[rev_field_idx] = iter.field;
+        }
+
+        // Dispatch basicList fields to the right column by inspecting the inner element
+        // type from the basicList header — all basicList IEs share (en=0, id=291) so
+        // template-time mapping cannot distinguish them.
+        static constexpr uint32_t IANA_BLIST_EN = 0;
+        static constexpr uint16_t IANA_BLIST_ID = 291;
+        if (!m_blist_columns.empty()
+                && iter.field.info->en == IANA_BLIST_EN
+                && iter.field.info->id == IANA_BLIST_ID
+                && iter.field.data != nullptr
+                && iter.field.size >= 5) {
+            const auto *blist = reinterpret_cast<const fds_ipfix_blist *>(iter.field.data);
+            uint16_t raw = ntohs(blist->field_id);
+            bool has_enterprise = (raw >> 15) & 1;
+            uint16_t inner_id = raw & 0x7FFFu;
+            uint32_t inner_pen = (has_enterprise && iter.field.size >= 9) ? ntohl(blist->enterprise_number) : 0u;
+            for (const auto &e : m_blist_columns) {
+                if (e.inner_pen == inner_pen && e.inner_id == inner_id) {
+                    m_fields[e.column_idx] = iter.field;
+                    break;
+                }
+            }
+            if (m_biflow) {
+                for (const auto &e : m_blist_columns_rev) {
+                    if (e.inner_pen == inner_pen && e.inner_id == inner_id) {
+                        m_fields_rev[e.column_idx] = iter.field;
+                        break;
+                    }
+                }
+            }
         }
     }
 }

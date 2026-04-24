@@ -27,6 +27,7 @@ struct Column {
     bool nullable;
 
     const fds_iemgr_elem *elem = nullptr;
+    const fds_iemgr_elem *inner_elem = nullptr;
     const fds_iemgr_alias *alias = nullptr;
     SpecialField special = SpecialField::NONE;
 };

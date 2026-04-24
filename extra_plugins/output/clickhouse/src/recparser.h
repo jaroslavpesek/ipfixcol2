@@ -79,6 +79,13 @@ private:
     bool m_biflow_autoignore; // Perform the skip checks.
     bool m_skip_flag_fwd; // Skip the fwd direction of this biflow.
     bool m_skip_flag_rev; // Skip the reverse direction of this biflow.
+    struct BlistColumn {
+        uint32_t inner_pen;
+        uint16_t inner_id;
+        int column_idx;
+    };
+    std::vector<BlistColumn> m_blist_columns;
+    std::vector<BlistColumn> m_blist_columns_rev;
     std::vector<int> m_mapping; // Index of field in drec -> index of field in the field vec.
     std::vector<int> m_mapping_rev; // Index of field in drec -> index of field in the reverse field vec.
     std::vector<fds_drec_field> m_fields; // Field for the nth column.

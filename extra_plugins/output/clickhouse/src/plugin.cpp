@@ -32,6 +32,7 @@ static std::vector<Column> prepare_columns(std::vector<Config::Column> &columns_
                 }
                 type = type_from_ipfix(column_cfg.inner_elem->data_type);
                 column.is_list = true;
+                column.inner_elem = column_cfg.inner_elem;
             } else {
                 type = type_from_ipfix(elem->data_type);
             }
