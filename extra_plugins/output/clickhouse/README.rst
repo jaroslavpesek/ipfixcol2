@@ -18,6 +18,11 @@ Key Features
   IPFIX/NetFlow items to the database by specifying the item name and mapping
   it to the corresponding database column.
 
+- **Parallel Record Processing**: The plugin can distribute IPFIX record
+  parsing and column building across multiple CPU cores via configurable
+  processor worker threads. This eliminates the single-thread bottleneck on
+  high-traffic taps where a single core cannot keep up with the input rate.
+
 - **High Availability (HA) Support**: The plugin supports sending data to
   multiple ClickHouse endpoints. In case of a failure at one endpoint, data is
   automatically redirected to the next available endpoint. This failover
@@ -66,6 +71,7 @@ using the following SQL query:
         protocolIdentifier UInt8,
         octetDeltaCount UInt64,
         packetDeltaCount UInt64,
+        PPI_PKT_LENGTHS Array(UInt16),
         INDEX srcipindex srcip TYPE bloom_filter GRANULARITY 16,
         INDEX dstipindex dstip TYPE bloom_filter GRANULARITY 16
     )
@@ -169,6 +175,7 @@ Example configuration
                 <table>flows</table>
             </connection>
             <inserterThreads>8</inserterThreads>
+            <processorThreads>4</processorThreads>
             <blocks>64</blocks>
             <blockInsertThreshold>100000</blockInsertThreshold>
             <splitBiflow>true</splitBiflow>
@@ -211,10 +218,10 @@ Example configuration
                     <name>packetDeltaCount</name>
                 </column>
                 <column>
-                    <!-- basicList field stored as Array(UInt32) in ClickHouse -->
-                    <name>mplsLabels</name>
-                    <source>iana:mplsTopLabelStackSection</source>
-                    <innerSource>iana:mplsLabel</innerSource>
+                    <!-- PPI per-packet lengths stored as Array(UInt16) in ClickHouse -->
+                    <name>PPI_PKT_LENGTHS</name>
+                    <source>iana:basicList</source>
+                    <innerSource>cesnet:packetLength</innerSource>
                 </column>
             </columns>
         </params>
@@ -291,6 +298,22 @@ Parameters
     If false, the processing thread is blocked, waiting until a block becomes
     available. [default: true]
 
+:``processorThreads``:
+    Number of worker threads used to parse IPFIX records and build ClickHouse
+    column data in parallel. When set to 0, parsing is performed inline on the
+    collector output thread (legacy single-threaded behaviour). When set to a
+    value greater than 0, the collector output thread acts as a dispatcher that
+    distributes records across N worker threads, sharded by exporter session so
+    that per-session ordering (templates, biflow, session close) is preserved.
+    Recommended starting value: half the number of available CPU cores, up to 8.
+    [default: 0]
+
+:``processorQueueDepth``:
+    Maximum number of pending work items in each processor worker queue. When
+    the queue is full and ``nonblocking`` is false, the dispatcher blocks until
+    space is available, naturally propagating back-pressure upstream. When
+    ``nonblocking`` is true, the excess records are dropped. [default: 256]
+
 :``columns``:
     The fields that each row will consist of.
 
@@ -335,6 +358,24 @@ performance at the cost of higher memory usage:
 
 .. code-block:: xml
 
+    <inserterThreads>16</inserterThreads>
+    <blocks>128</blocks>
+    <blockInsertThreshold>500000</blockInsertThreshold>
+
+If a single CPU core cannot drain the input ring fast enough (visible as
+increasing UDP receive-buffer errors), enable parallel record processing by
+setting ``processorThreads`` to the number of worker threads. The output thread
+becomes a lightweight dispatcher; each worker independently parses records and
+builds ClickHouse blocks. Records from the same exporter session are always
+handled by the same worker, preserving template and biflow ordering. The
+``blocks`` pool is automatically enlarged to ``max(blocks, 2 * (processorThreads
++ inserterThreads))`` so that all workers and inserters can hold a block
+concurrently.
+
+.. code-block:: xml
+
+    <processorThreads>4</processorThreads>
+    <processorQueueDepth>256</processorQueueDepth>
     <inserterThreads>16</inserterThreads>
     <blocks>128</blocks>
     <blockInsertThreshold>500000</blockInsertThreshold>

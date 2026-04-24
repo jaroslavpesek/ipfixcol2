@@ -436,10 +436,10 @@ static bool needs_def_ptr(DataType type)
 }
 
 void write_list_to_column(DataType elem_type, bool nullable, fds_drec_field& field,
-                           clickhouse::Column& column, const fds_iemgr_t *iemgr)
+                           clickhouse::Column& column, const fds_iemgr_t *iemgr,
+                           std::shared_ptr<clickhouse::Column>& scratch)
 {
     auto &arr_col = dynamic_cast<clickhouse::ColumnArray &>(column);
-    auto inner_col = make_column(elem_type, nullable, false);
 
     fds_blist_iter iter;
     fds_blist_iter_init(&iter, &field, iemgr);
@@ -451,22 +451,25 @@ void write_list_to_column(DataType elem_type, bool nullable, fds_drec_field& fie
                 throw ConversionError("datetime inner element definition not found in IE manager");
             }
             ValueVariant val = get_value(elem_type, iter.field);
-            write_to_column(elem_type, nullable, *inner_col, &val);
+            write_to_column(elem_type, nullable, *scratch, &val);
         } catch (const ConversionError &) {
-            write_to_column(elem_type, nullable, *inner_col, nullptr);
+            write_to_column(elem_type, nullable, *scratch, nullptr);
         }
     }
 
     if (rc != FDS_EOC) {
+        scratch->Clear();
         throw ConversionError(fmt::format("basicList parse error: {}", fds_blist_iter_err(&iter)));
     }
 
-    arr_col.AppendAsColumn(inner_col);
+    arr_col.AppendAsColumn(scratch);
+    scratch->Clear();
 }
 
-void write_empty_list_to_column(DataType elem_type, bool nullable, clickhouse::Column& column)
+void write_empty_list_to_column(clickhouse::Column& column,
+                                 std::shared_ptr<clickhouse::Column>& scratch)
 {
+    // scratch must be empty; AppendAsColumn records an empty array row.
     auto &arr_col = dynamic_cast<clickhouse::ColumnArray &>(column);
-    auto empty_inner = make_column(elem_type, nullable, false);
-    arr_col.AppendAsColumn(empty_inner);
+    arr_col.AppendAsColumn(scratch);
 }

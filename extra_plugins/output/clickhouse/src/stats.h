@@ -11,6 +11,7 @@
 #pragma once
 
 #include "common.h"
+#include <atomic>
 #include <cstdint>
 #include <ctime>
 
@@ -63,10 +64,10 @@ public:
 private:
     Logger m_logger; ///< Logger instance for logging statistics.
     Plugin &m_plugin; ///< Reference to the associated Plugin instance.
-    uint64_t m_rows_written_total = 0; ///< Total number of rows written.
-    uint64_t m_recs_processed_total = 0; ///< Total number of records processed.
-    uint64_t m_recs_processed_since_last = 0; ///< Records processed since the last statistics print.
-    uint64_t m_recs_dropped_total = 0; ///< Total number of records dropped.
+    std::atomic<uint64_t> m_rows_written_total{0}; ///< Total number of rows written.
+    std::atomic<uint64_t> m_recs_processed_total{0}; ///< Total number of records processed.
+    std::atomic<uint64_t> m_recs_processed_since_last{0}; ///< Records processed since the last statistics print.
+    std::atomic<uint64_t> m_recs_dropped_total{0}; ///< Total number of records dropped.
     time_t m_start_time = 0; ///< Start time of the statistics tracking.
     time_t m_last_stats_print_time = 0; ///< Time of the last statistics print.
 };

@@ -65,7 +65,7 @@ Plugin::Plugin(ipx_ctx_t *ctx, const char *xml_config)
     : m_logger(ctx)
     , m_stats(m_logger, *this)
 {
-    // Subscribe to periodic messages aswell to ensure data export even when no data is coming
+    // Subscribe to periodic messages as well to ensure data export even when no data is coming
     ipx_msg_mask_t new_mask = IPX_MSG_IPFIX | IPX_MSG_PERIODIC | IPX_MSG_SESSION;
     int rc = ipx_ctx_subscribe(ctx, &new_mask, nullptr);
     if (rc != IPX_OK) {
@@ -82,14 +82,27 @@ Plugin::Plugin(ipx_ctx_t *ctx, const char *xml_config)
     }
 
     m_columns = prepare_columns(m_config.columns);
-    m_rec_parsers = std::make_unique<RecParserManager>(m_columns, m_config.biflow_empty_autoignore);
+
+    // Ensure we have enough blocks for all processors + inserters + some slack.
+    uint64_t n_proc = m_config.processor_threads;
+    uint64_t needed_blocks = (n_proc > 0)
+        ? std::max(m_config.blocks, 2 * (n_proc + m_config.inserter_threads))
+        : m_config.blocks;
+    if (needed_blocks > m_config.blocks) {
+        m_logger.warning("Bumping blocks from %lu to %lu to avoid pool starvation (processorThreads=%lu, inserterThreads=%lu)",
+                         m_config.blocks, needed_blocks, n_proc, m_config.inserter_threads);
+    }
 
     // Prepare blocks
-    for (unsigned int i = 0; i < m_config.blocks; i++) {
+    for (unsigned int i = 0; i < needed_blocks; i++) {
         std::unique_ptr<Block> blk = std::make_unique<Block>();
-        for (const auto &column : m_columns) {
-            blk->columns.emplace_back(make_column(column.datatype, column.nullable, column.is_list));
-            blk->block.AppendColumn(column.name, blk->columns.back());
+        blk->list_scratch.resize(m_columns.size());
+        for (std::size_t ci = 0; ci < m_columns.size(); ci++) {
+            blk->columns.emplace_back(make_column(m_columns[ci].datatype, m_columns[ci].nullable, m_columns[ci].is_list));
+            blk->block.AppendColumn(m_columns[ci].name, blk->columns.back());
+            if (m_columns[ci].is_list) {
+                blk->list_scratch[ci] = make_column(m_columns[ci].datatype, m_columns[ci].nullable, false);
+            }
         }
         m_blocks.emplace_back(std::move(blk));
         m_avail_blocks.put(m_blocks.back().get());
@@ -114,14 +127,50 @@ Plugin::Plugin(ipx_ctx_t *ctx, const char *xml_config)
         m_inserters.emplace_back(std::move(ins));
     }
 
+    // Prepare parallel processors (if enabled)
+    if (n_proc > 0) {
+        for (unsigned int i = 0; i < n_proc; i++) {
+            m_proc_queues.push_back(
+                std::make_unique<BoundedQueue<ProcItem>>(m_config.processor_queue_depth));
+        }
+
+        for (unsigned int i = 0; i < n_proc; i++) {
+            m_processors.push_back(std::make_unique<Processor>(
+                i,
+                m_logger,
+                m_columns,
+                m_iemgr,
+                m_stats,
+                m_avail_blocks,
+                m_filled_blocks,
+                m_config.biflow_empty_autoignore,
+                m_config.block_insert_threshold,
+                m_config.block_insert_max_delay_secs,
+                *m_proc_queues[i]));
+        }
+    } else {
+        // Legacy inline path
+        m_rec_parsers = std::make_unique<RecParserManager>(m_columns, m_config.biflow_empty_autoignore);
+    }
+
     m_logger.info("Starting inserters");
     for (auto &ins : m_inserters) {
         ins->start();
     }
 
+    if (n_proc > 0) {
+        m_logger.info("Starting %lu processor threads", n_proc);
+        for (auto &proc : m_processors) {
+            proc->start();
+        }
+    }
 
     m_logger.info("ClickHouse plugin is ready");
 }
+
+// ---------------------------------------------------------------------------
+// Inline (legacy, processor_threads==0) path — unchanged logic.
+// ---------------------------------------------------------------------------
 
 void Plugin::extract_values(ipx_msg_ipfix_t *msg, RecParser &parser, Block &block, bool rev)
 {
@@ -135,16 +184,15 @@ void Plugin::extract_values(ipx_msg_ipfix_t *msg, RecParser &parser, Block &bloc
             if (field.data != nullptr) {
                 try {
                     write_list_to_column(m_columns[i].datatype, m_columns[i].nullable,
-                                         field, *block.columns[i].get(), m_iemgr);
+                                         field, *block.columns[i].get(), m_iemgr,
+                                         block.list_scratch[i]);
                 } catch (const ConversionError& err) {
                     m_logger.error("List field conversion failed (field #%zu, \"%s\"): %s",
                                    i, m_columns[i].name.c_str(), err.what());
-                    write_empty_list_to_column(m_columns[i].datatype, m_columns[i].nullable,
-                                               *block.columns[i].get());
+                    write_empty_list_to_column(*block.columns[i].get(), block.list_scratch[i]);
                 }
             } else {
-                write_empty_list_to_column(m_columns[i].datatype, m_columns[i].nullable,
-                                           *block.columns[i].get());
+                write_empty_list_to_column(*block.columns[i].get(), block.list_scratch[i]);
             }
             continue;
         }
@@ -177,9 +225,6 @@ int
 Plugin::process_record(ipx_msg_ipfix_t *msg, fds_drec &rec, Block &block)
 {
     if (rec.tmplt->type == FDS_TYPE_TEMPLATE_OPTS) {
-        // skip the data record if the template used is a options template
-        // currently we only want data records using "normal" templates
-        // this is to prevent empty records in the database and might be improved upon in the future
         return 0;
     }
 
@@ -203,8 +248,23 @@ Plugin::process_record(ipx_msg_ipfix_t *msg, fds_drec &rec, Block &block)
 void
 Plugin::process_session_msg(ipx_msg_session_t *msg)
 {
-    if (ipx_msg_session_get_event(msg) == IPX_MSG_SESSION_CLOSE) {
-        const ipx_session *sess = ipx_msg_session_get_session(msg);
+    if (ipx_msg_session_get_event(msg) != IPX_MSG_SESSION_CLOSE) return;
+
+    const ipx_session *sess = ipx_msg_session_get_session(msg);
+
+    if (!m_processors.empty()) {
+        // Parallel path: remove from known-template set, then FIFO-deliver to owner worker.
+        for (auto it = m_known_templates.begin(); it != m_known_templates.end(); ) {
+            if (it->session == sess) {
+                it = m_known_templates.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        // Route to owning worker (same hash as used for WorkItems).
+        std::size_t shard = std::hash<const void *>{}(sess) % m_proc_queues.size();
+        m_proc_queues[shard]->put(ProcItem{SessionClose{sess}});
+    } else {
         m_rec_parsers->delete_session(sess);
     }
 }
@@ -212,14 +272,13 @@ Plugin::process_session_msg(ipx_msg_session_t *msg)
 void
 Plugin::process_ipfix_msg(ipx_msg_ipfix_t *msg)
 {
-    // get new block if we don't have one
+    // Inline (legacy) path: no processor threads.
     if (m_current_block == nullptr) {
         if (m_config.nonblocking) {
             std::optional<Block *> maybe_block = m_avail_blocks.try_get();
             if (maybe_block.has_value()) {
                 m_current_block = maybe_block.value();
             } else {
-                // no available blocks and we are in a non-blocking mode, drop the message
                 uint32_t drec_cnt = ipx_msg_ipfix_get_drec_cnt(msg);
                 m_stats.add_dropped(drec_cnt);
                 return;
@@ -229,7 +288,6 @@ Plugin::process_ipfix_msg(ipx_msg_ipfix_t *msg)
         }
     }
 
-    // setup rec parser
     const ipx_msg_ctx *msg_ctx = ipx_msg_ipfix_get_ctx(msg);
     if (msg_ctx->session->type == FDS_SESSION_SCTP) {
         throw std::runtime_error("SCTP is not supported at this time");
@@ -237,7 +295,6 @@ Plugin::process_ipfix_msg(ipx_msg_ipfix_t *msg)
     m_rec_parsers->select_session(msg_ctx->session);
     m_rec_parsers->select_odid(msg_ctx->odid);
 
-    // go through all the records
     uint32_t drec_cnt = ipx_msg_ipfix_get_drec_cnt(msg);
     uint32_t rows_count = 0;
     for (uint32_t idx = 0; idx < drec_cnt; idx++) {
@@ -251,6 +308,75 @@ Plugin::process_ipfix_msg(ipx_msg_ipfix_t *msg)
 }
 
 void
+Plugin::process_ipfix_msg_parallel(ipx_msg_ipfix_t *msg)
+{
+    // Parallel path: dispatcher thread deep-copies drec data and enqueues to workers.
+    const ipx_msg_ctx *msg_ctx = ipx_msg_ipfix_get_ctx(msg);
+    if (msg_ctx->session->type == FDS_SESSION_SCTP) {
+        throw std::runtime_error("SCTP is not supported at this time");
+    }
+
+    const ipx_session *session = msg_ctx->session;
+    uint32_t odid = msg_ctx->odid;
+    uint32_t drec_cnt = ipx_msg_ipfix_get_drec_cnt(msg);
+    std::size_t shard = std::hash<const void *>{}(session) % m_proc_queues.size();
+    auto &queue = *m_proc_queues[shard];
+
+    m_stats.add_recs(drec_cnt);
+
+    // Pass 1: ensure worker knows all templates in this message (before enqueuing WorkItem).
+    for (uint32_t idx = 0; idx < drec_cnt; idx++) {
+        ipx_ipfix_record *rec = ipx_msg_ipfix_get_drec(msg, idx);
+        if (rec->rec.tmplt->type == FDS_TYPE_TEMPLATE_OPTS) continue;
+
+        TemplateKey key{session, odid, rec->rec.tmplt->id};
+        if (m_known_templates.find(key) == m_known_templates.end()) {
+            fds_template *copy = fds_template_copy(rec->rec.tmplt);
+            if (!copy) throw std::bad_alloc{};
+            queue.put(ProcItem{TemplateRegister{session, odid, rec->rec.tmplt->id, copy}});
+            m_known_templates.insert(key);
+        }
+    }
+
+    // Pass 2: pack drec field data into a single owned buffer.
+    uint32_t total_size = 0;
+    for (uint32_t idx = 0; idx < drec_cnt; idx++) {
+        ipx_ipfix_record *rec = ipx_msg_ipfix_get_drec(msg, idx);
+        if (rec->rec.tmplt->type == FDS_TYPE_TEMPLATE_OPTS) continue;
+        total_size += rec->rec.size;
+    }
+
+    if (total_size == 0) return; // all records were opts — nothing to dispatch
+
+    std::unique_ptr<uint8_t[]> buf(new uint8_t[total_size]);
+    std::vector<DrecInfo> drecs;
+    drecs.reserve(drec_cnt);
+
+    uint32_t offset = 0;
+    for (uint32_t idx = 0; idx < drec_cnt; idx++) {
+        ipx_ipfix_record *rec = ipx_msg_ipfix_get_drec(msg, idx);
+        if (rec->rec.tmplt->type == FDS_TYPE_TEMPLATE_OPTS) continue;
+        std::memcpy(buf.get() + offset, rec->rec.data, rec->rec.size);
+        drecs.push_back({rec->rec.tmplt->id, offset, rec->rec.size});
+        offset += rec->rec.size;
+    }
+
+    WorkItem wi;
+    wi.buf     = std::move(buf);
+    wi.drecs   = std::move(drecs);
+    wi.session = session;
+    wi.odid    = odid;
+
+    if (m_config.nonblocking) {
+        if (!queue.try_put(ProcItem{std::move(wi)})) {
+            m_stats.add_dropped(drec_cnt);
+        }
+    } else {
+        queue.put(ProcItem{std::move(wi)});
+    }
+}
+
+void
 Plugin::process(ipx_msg_t *msg)
 {
     if (ipx_msg_get_type(msg) == IPX_MSG_SESSION) {
@@ -258,20 +384,34 @@ Plugin::process(ipx_msg_t *msg)
 
     } else if (ipx_msg_get_type(msg) == IPX_MSG_IPFIX) {
         ipx_msg_ipfix_t *ipfix_msg = ipx_msg_base2ipfix(msg);
-        process_ipfix_msg(ipfix_msg);
+        if (!m_processors.empty()) {
+            process_ipfix_msg_parallel(ipfix_msg);
+        } else {
+            process_ipfix_msg(ipfix_msg);
+        }
     }
 
     time_t now = std::time(nullptr);
 
-    // Send the block for insertion if it is sufficiently full or a block hasn't been sent in a long enough time
-    if (m_current_block) {
-        bool nonempty = m_current_block->rows > 0;
-        bool thresh_reached = m_current_block->rows >= m_config.block_insert_threshold;
-        bool timeout_reached = uint64_t(now - m_last_insert_time) >= m_config.block_insert_max_delay_secs;
+    if (m_processors.empty()) {
+        // Inline path: flush logic unchanged.
+        if (m_current_block) {
+            bool nonempty = m_current_block->rows > 0;
+            bool thresh_reached = m_current_block->rows >= m_config.block_insert_threshold;
+            bool timeout_reached = uint64_t(now - m_last_insert_time) >= m_config.block_insert_max_delay_secs;
 
-        if (nonempty && (thresh_reached || timeout_reached)) {
-            m_filled_blocks.put(m_current_block);
-            m_current_block = nullptr;
+            if (nonempty && (thresh_reached || timeout_reached)) {
+                m_filled_blocks.put(m_current_block);
+                m_current_block = nullptr;
+                m_last_insert_time = now;
+            }
+        }
+    } else {
+        // Parallel path: broadcast PeriodicFlush to all workers once per timeout period.
+        if (uint64_t(now - m_last_insert_time) >= m_config.block_insert_max_delay_secs) {
+            for (auto &q : m_proc_queues) {
+                q->put(ProcItem{PeriodicFlush{}});
+            }
             m_last_insert_time = now;
         }
     }
@@ -283,25 +423,38 @@ Plugin::process(ipx_msg_t *msg)
     for (auto &ins : m_inserters) {
         ins->check_error();
     }
-
+    for (auto &proc : m_processors) {
+        proc->check_error();
+    }
 }
 
 void Plugin::stop()
 {
-    // Export what's left in the last block
-    if (m_current_block && m_current_block->rows > 0) {
-        m_filled_blocks.put(m_current_block);
-        m_current_block = nullptr;
+    if (!m_processors.empty()) {
+        // Parallel path: stop processors first (FIFO drain ensures all WorkItems are processed).
+        m_logger.info("Sending stop signal to processor threads...");
+        for (auto &q : m_proc_queues) {
+            q->put(ProcItem{Stop{}});
+        }
+        m_logger.info("Waiting for processor threads to finish...");
+        for (auto &proc : m_processors) {
+            proc->join();
+        }
+    } else {
+        // Inline path: export what's left in the last block.
+        if (m_current_block && m_current_block->rows > 0) {
+            m_filled_blocks.put(m_current_block);
+            m_current_block = nullptr;
+        }
     }
 
-    // Stop all the threads and wait for them to finish
+    // Stop all inserter threads and wait for them to finish.
     m_logger.info("Sending stop signal to inserter threads...");
     for (auto &ins : m_inserters) {
         ins->request_stop();
     }
     for (const auto &ins : m_inserters) {
         (void) ins;
-        // Wake up the inserter threads in case they are waiting on a .get()
         m_filled_blocks.put(nullptr);
     }
 
@@ -311,7 +464,7 @@ void Plugin::stop()
     }
 
     std::size_t drop_count = 0;
-    for (const auto& block : m_blocks) {
+    for (const auto &block : m_blocks) {
         drop_count += block->rows;
     }
     m_logger.warning("%zu rows could not have been inserted and have been dropped due to termination timeout",

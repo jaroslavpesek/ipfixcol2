@@ -11,17 +11,20 @@
 #pragma once
 
 #include "block.h"
+#include "bounded_queue.h"
 #include "clickhouse.h"
 #include "column.h"
 #include "common.h"
 #include "config.h"
 #include "inserter.h"
+#include "processor.h"
 #include "recparser.h"
 #include "stats.h"
 
 #include <ipfixcol2.h>
 #include <libfds.h>
 #include <memory>
+#include <unordered_set>
 
 
 /**
@@ -65,16 +68,42 @@ private:
     SyncQueue<Block *> m_avail_blocks;
     SyncQueue<Block *> m_filled_blocks;
 
+    // --- Inline (legacy) path state ---
     Block *m_current_block = nullptr;
+    std::time_t m_last_insert_time = 0;
+    std::unique_ptr<RecParserManager> m_rec_parsers;
+
+    // --- Parallel processor path state ---
+    std::vector<std::unique_ptr<Processor>> m_processors;
+    std::vector<std::unique_ptr<BoundedQueue<ProcItem>>> m_proc_queues;
+
+    // Tracks (session*, odid, tmpl_id) already delivered to each worker as TemplateRegister.
+    // Shard routing is hash(session*) % N so each (session, *) belongs to one worker.
+    struct TemplateKey {
+        const ipx_session *session;
+        uint32_t           odid;
+        uint16_t           tmpl_id;
+        bool operator==(const TemplateKey &o) const noexcept {
+            return session == o.session && odid == o.odid && tmpl_id == o.tmpl_id;
+        }
+    };
+    struct TemplateKeyHash {
+        std::size_t operator()(const TemplateKey &k) const noexcept {
+            std::size_t h = std::hash<const void *>{}(k.session);
+            h ^= std::hash<uint32_t>{}(k.odid)    + 0x9e3779b9u + (h << 6) + (h >> 2);
+            h ^= std::hash<uint16_t>{}(k.tmpl_id) + 0x9e3779b9u + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+    std::unordered_set<TemplateKey, TemplateKeyHash> m_known_templates;
 
     Stats m_stats;
 
-    std::time_t m_last_insert_time = 0;
-
-    std::unique_ptr<RecParserManager> m_rec_parsers;
-
     void
     process_ipfix_msg(ipx_msg_ipfix_t *msg);
+
+    void
+    process_ipfix_msg_parallel(ipx_msg_ipfix_t *msg);
 
     void
     process_session_msg(ipx_msg_session_t *msg);

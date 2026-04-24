@@ -229,15 +229,18 @@ void write_to_column(DataType type, bool nullable, clickhouse::Column& column, V
  * @param field The raw basicList field from the IPFIX record.
  * @param column The ClickHouse Array column to append the row to.
  * @param iemgr IE manager used to resolve inner element definitions (may be NULL).
+ * @param scratch Pre-allocated inner column for this list type (cleared after use; reused to
+ *                avoid per-row allocation).  Must match (elem_type, nullable).
  */
 void write_list_to_column(DataType elem_type, bool nullable, fds_drec_field& field,
-                           clickhouse::Column& column, const fds_iemgr_t *iemgr);
+                           clickhouse::Column& column, const fds_iemgr_t *iemgr,
+                           std::shared_ptr<clickhouse::Column>& scratch);
 
 /**
  * Appends an empty array row to an Array column (used when the field is absent).
  *
- * @param elem_type The element type of the array.
- * @param nullable Whether list elements are nullable.
  * @param column The ClickHouse Array column.
+ * @param scratch Pre-allocated (empty) inner column of the right type.
  */
-void write_empty_list_to_column(DataType elem_type, bool nullable, clickhouse::Column& column);
+void write_empty_list_to_column(clickhouse::Column& column,
+                                 std::shared_ptr<clickhouse::Column>& scratch);

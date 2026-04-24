@@ -56,6 +56,8 @@ struct Config {
     bool split_biflow = true;
     bool biflow_empty_autoignore = true;
     bool nonblocking = true;
+    uint64_t processor_threads = 0;       // 0 = inline (legacy single-threaded) mode
+    uint64_t processor_queue_depth = 256; // bounded queue depth per processor worker
 };
 
 /**

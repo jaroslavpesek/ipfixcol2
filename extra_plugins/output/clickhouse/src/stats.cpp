@@ -17,18 +17,18 @@ Stats::Stats(Logger logger, Plugin& plugin) : m_logger(logger), m_plugin(plugin)
 
 void Stats::add_recs(uint64_t count)
 {
-    m_recs_processed_since_last += count;
-    m_recs_processed_total += count;
+    m_recs_processed_since_last.fetch_add(count, std::memory_order_relaxed);
+    m_recs_processed_total.fetch_add(count, std::memory_order_relaxed);
 }
 
 void Stats::add_rows(uint64_t count)
 {
-    m_rows_written_total += count;
+    m_rows_written_total.fetch_add(count, std::memory_order_relaxed);
 }
 
 void Stats::add_dropped(uint64_t count)
 {
-    m_recs_dropped_total += count;
+    m_recs_dropped_total.fetch_add(count, std::memory_order_relaxed);
 }
 
 void Stats::print_stats_throttled(time_t now)
@@ -38,18 +38,18 @@ void Stats::print_stats_throttled(time_t now)
     }
 
     if ((now - m_last_stats_print_time) > STATS_PRINT_INTERVAL_SECS) {
-        double total_rps = m_recs_processed_total / std::max<double>(1, now - m_start_time);
-        double immediate_rps = m_recs_processed_since_last / std::max<double>(1, now - m_last_stats_print_time);
+        double total_rps = m_recs_processed_total.load(std::memory_order_relaxed) / std::max<double>(1, now - m_start_time);
+        double immediate_rps = m_recs_processed_since_last.load(std::memory_order_relaxed) / std::max<double>(1, now - m_last_stats_print_time);
         m_logger.info("STATS - RECS: %lu (%lu dropped), ROWS: %lu, AVG: %.2f recs/sec, AVG_IMMEDIATE: %.2f recs/sec, BLK_AVAIL_Q: %lu, BLK_FILL_Q: %lu",
-                      m_recs_processed_total,
-                      m_recs_dropped_total,
-                      m_rows_written_total,
+                      m_recs_processed_total.load(std::memory_order_relaxed),
+                      m_recs_dropped_total.load(std::memory_order_relaxed),
+                      m_rows_written_total.load(std::memory_order_relaxed),
                       total_rps,
                       immediate_rps,
                       m_plugin.m_avail_blocks.size(),
                       m_plugin.m_filled_blocks.size()
                       );
-        m_recs_processed_since_last = 0;
+        m_recs_processed_since_last.store(0, std::memory_order_relaxed);
         m_last_stats_print_time = now;
     }
 }

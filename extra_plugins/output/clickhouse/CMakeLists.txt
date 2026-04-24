@@ -56,6 +56,7 @@ add_library(clickhouse-output MODULE
     src/main.cpp
     src/plugin.cpp
     src/inserter.cpp
+    src/processor.cpp
     src/recparser.cpp
     src/stats.cpp
 )

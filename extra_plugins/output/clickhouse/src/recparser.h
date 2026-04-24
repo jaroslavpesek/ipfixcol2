@@ -90,6 +90,10 @@ private:
     std::vector<int> m_mapping_rev; // Index of field in drec -> index of field in the reverse field vec.
     std::vector<fds_drec_field> m_fields; // Field for the nth column.
     std::vector<fds_drec_field> m_fields_rev; // Reverse field for the nth column.
+    // Indices of m_fields / m_fields_rev set during the previous parse_record call.
+    // Used to clear only the set fields rather than the entire vector.
+    std::vector<int> m_dirty_fwd;
+    std::vector<int> m_dirty_rev;
 };
 
 /**
@@ -138,6 +142,31 @@ public:
      * @return A reference to the corresponding RecParser.
      */
     RecParser& get_parser(const fds_template *tmplt);
+
+    /**
+     * @brief Register a template for a specific session/odid, creating or replacing the RecParser.
+     *
+     * Takes ownership of tmplt_copy (calls fds_template_destroy on it after RecParser copies it
+     * internally).  Intended for use by Processor workers where the dispatcher pre-copies templates
+     * before enqueuing them in TemplateRegister work items.
+     *
+     * @param sess     Session that owns this template.
+     * @param odid     Observation Domain ID.
+     * @param tmplt    Deep-copied fds_template owned by the caller; ownership consumed here.
+     */
+    void register_parser(const ipx_session *sess, uint32_t odid, fds_template *tmplt);
+
+    /**
+     * @brief Fast per-template-ID parser lookup without template comparison.
+     *
+     * Requires select_session() + select_odid() to have been called first.
+     * Returns nullptr if no parser exists for this template ID (should not happen
+     * after a corresponding TemplateRegister work item has been processed).
+     *
+     * @param tmpl_id Template ID to look up.
+     * @return Pointer to RecParser, or nullptr.
+     */
+    RecParser* get_parser_by_id(uint16_t tmpl_id);
 
 private:
     using TemplateMap = std::unordered_map<uint16_t, RecParser>; ///< Map of template IDs to RecParser instances.

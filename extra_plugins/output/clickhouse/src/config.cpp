@@ -42,6 +42,8 @@ enum {
     BIFLOW_EMPTY_AUTOIGNORE,
     NONBLOCKING,
     INNER_SOURCE,
+    PROCESSOR_THREADS,
+    PROCESSOR_QUEUE_DEPTH,
 };
 
 
@@ -88,6 +90,8 @@ static const struct fds_xml_args root[] = {
     FDS_OPTS_ELEM  (SPLIT_BIFLOW,                "splitBiflow",             FDS_OPTS_T_BOOL,   FDS_OPTS_P_OPT),
     FDS_OPTS_ELEM  (BIFLOW_EMPTY_AUTOIGNORE,     "biflowEmptyAutoignore",   FDS_OPTS_T_BOOL,   FDS_OPTS_P_OPT),
     FDS_OPTS_ELEM  (NONBLOCKING,                 "nonblocking",             FDS_OPTS_T_BOOL,   FDS_OPTS_P_OPT),
+    FDS_OPTS_ELEM  (PROCESSOR_THREADS,           "processorThreads",        FDS_OPTS_T_UINT,   FDS_OPTS_P_OPT),
+    FDS_OPTS_ELEM  (PROCESSOR_QUEUE_DEPTH,       "processorQueueDepth",     FDS_OPTS_T_UINT,   FDS_OPTS_P_OPT),
     FDS_OPTS_NESTED(COLUMNS,                     "columns",                 columns,           0),
     FDS_OPTS_END,
 };
@@ -258,6 +262,14 @@ static void parse_root(fds_xml_ctx_t *root_ctx, const fds_iemgr_t *iemgr, Config
         } else if (content->id == args::NONBLOCKING) {
             config.nonblocking = content->val_bool;
 
+        } else if (content->id == args::PROCESSOR_THREADS) {
+            config.processor_threads = content->val_uint;
+
+        } else if (content->id == args::PROCESSOR_QUEUE_DEPTH) {
+            config.processor_queue_depth = content->val_uint;
+            if (config.processor_queue_depth == 0) {
+                throw std::runtime_error("processorQueueDepth must be > 0");
+            }
         }
     }
 }

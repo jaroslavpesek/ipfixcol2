@@ -74,6 +74,8 @@ RecParser::RecParser(const std::vector<Column> &columns, const fds_template *tmp
 
     m_fields.resize(columns.size(), fds_drec_field{nullptr, 0, nullptr});
     m_fields_rev.resize(columns.size(), fds_drec_field{nullptr, 0, nullptr});
+    m_dirty_fwd.reserve(columns.size());
+    m_dirty_rev.reserve(columns.size());
     m_mapping.resize(tmplt->fields_cnt_total, -1);
     m_mapping_rev.resize(tmplt->fields_cnt_total, -1);
 
@@ -137,12 +139,15 @@ void RecParser::parse_record(fds_drec &rec)
         m_skip_flag_rev = true;
     }
 
-    for (fds_drec_field &field : m_fields) {
-        field = fds_drec_field{nullptr, 0, nullptr};
+    // Clear only the fields that were set in the previous call (faster than full fill).
+    for (int idx : m_dirty_fwd) {
+        m_fields[idx] = fds_drec_field{nullptr, 0, nullptr};
     }
-    for (fds_drec_field &field : m_fields_rev) {
-        field = fds_drec_field{nullptr, 0, nullptr};
+    m_dirty_fwd.clear();
+    for (int idx : m_dirty_rev) {
+        m_fields_rev[idx] = fds_drec_field{nullptr, 0, nullptr};
     }
+    m_dirty_rev.clear();
 
     fds_drec_iter iter;
     fds_drec_iter_init(&iter, &rec, 0);
@@ -156,11 +161,13 @@ void RecParser::parse_record(fds_drec &rec)
         int field_idx = m_mapping[i];
         if (field_idx != -1) {
             m_fields[field_idx] = iter.field;
+            m_dirty_fwd.push_back(field_idx);
         }
 
         int rev_field_idx = m_mapping_rev[i];
         if (rev_field_idx != -1) {
             m_fields_rev[rev_field_idx] = iter.field;
+            m_dirty_rev.push_back(rev_field_idx);
         }
 
         // Dispatch basicList fields to the right column by inspecting the inner element
@@ -181,6 +188,7 @@ void RecParser::parse_record(fds_drec &rec)
             for (const auto &e : m_blist_columns) {
                 if (e.inner_pen == inner_pen && e.inner_id == inner_id) {
                     m_fields[e.column_idx] = iter.field;
+                    m_dirty_fwd.push_back(e.column_idx);
                     break;
                 }
             }
@@ -188,6 +196,7 @@ void RecParser::parse_record(fds_drec &rec)
                 for (const auto &e : m_blist_columns_rev) {
                     if (e.inner_pen == inner_pen && e.inner_id == inner_id) {
                         m_fields_rev[e.column_idx] = iter.field;
+                        m_dirty_rev.push_back(e.column_idx);
                         break;
                     }
                 }
@@ -245,4 +254,20 @@ RecParser &RecParserManager::get_parser(const fds_template *tmplt)
         return it->second;
     }
     return it->second;
+}
+
+void RecParserManager::register_parser(const ipx_session *sess, uint32_t odid, fds_template *tmplt)
+{
+    // RecParser deep-copies the template internally; destroy the caller's copy afterwards.
+    select_session(sess);
+    select_odid(odid);
+    get_parser(tmplt);
+    fds_template_destroy(tmplt);
+}
+
+RecParser *RecParserManager::get_parser_by_id(uint16_t tmpl_id)
+{
+    assert(m_active_odid != nullptr);
+    auto it = m_active_odid->find(tmpl_id);
+    return it != m_active_odid->end() ? &it->second : nullptr;
 }
