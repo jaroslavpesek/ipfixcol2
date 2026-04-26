@@ -44,6 +44,7 @@ enum {
     INNER_SOURCE,
     PROCESSOR_THREADS,
     PROCESSOR_QUEUE_DEPTH,
+    PROCESSOR_DISPATCH_MODE,
 };
 
 
@@ -92,6 +93,7 @@ static const struct fds_xml_args root[] = {
     FDS_OPTS_ELEM  (NONBLOCKING,                 "nonblocking",             FDS_OPTS_T_BOOL,   FDS_OPTS_P_OPT),
     FDS_OPTS_ELEM  (PROCESSOR_THREADS,           "processorThreads",        FDS_OPTS_T_UINT,   FDS_OPTS_P_OPT),
     FDS_OPTS_ELEM  (PROCESSOR_QUEUE_DEPTH,       "processorQueueDepth",     FDS_OPTS_T_UINT,   FDS_OPTS_P_OPT),
+    FDS_OPTS_ELEM  (PROCESSOR_DISPATCH_MODE,     "processorDispatchMode",   FDS_OPTS_T_STRING, FDS_OPTS_P_OPT),
     FDS_OPTS_NESTED(COLUMNS,                     "columns",                 columns,           0),
     FDS_OPTS_END,
 };
@@ -104,6 +106,17 @@ static std::optional<SpecialField> parse_special_field(const std::string &name)
         return {SpecialField::ODID};
     }
     return {};
+}
+
+static ProcessorDispatchMode parse_processor_dispatch_mode(const std::string &mode)
+{
+    if (mode == "roundRobin") {
+        return ProcessorDispatchMode::RoundRobin;
+    }
+    if (mode == "session") {
+        return ProcessorDispatchMode::Session;
+    }
+    throw std::runtime_error("processorDispatchMode must be \"roundRobin\" or \"session\"");
 }
 
 static Config::Column parse_column(fds_xml_ctx_t *column_ctx, const fds_iemgr_t *iemgr)
@@ -270,6 +283,8 @@ static void parse_root(fds_xml_ctx_t *root_ctx, const fds_iemgr_t *iemgr, Config
             if (config.processor_queue_depth == 0) {
                 throw std::runtime_error("processorQueueDepth must be > 0");
             }
+        } else if (content->id == args::PROCESSOR_DISPATCH_MODE) {
+            config.processor_dispatch_mode = parse_processor_dispatch_mode(content->ptr_string);
         }
     }
 }

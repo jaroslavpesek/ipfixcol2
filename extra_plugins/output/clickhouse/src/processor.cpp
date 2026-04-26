@@ -23,6 +23,8 @@ Processor::Processor(
     SyncQueue<Block *>         &avail_blocks,
     SyncQueue<Block *>         &filled_blocks,
     bool                        biflow_autoignore,
+    bool                        split_biflow,
+    bool                        nonblocking,
     uint64_t                    block_insert_threshold,
     uint64_t                    block_insert_max_delay_secs,
     BoundedQueue<ProcItem>     &queue)
@@ -34,6 +36,8 @@ Processor::Processor(
     , m_avail_blocks(avail_blocks)
     , m_filled_blocks(filled_blocks)
     , m_biflow_autoignore(biflow_autoignore)
+    , m_split_biflow(split_biflow)
+    , m_nonblocking(nonblocking)
     , m_block_insert_threshold(block_insert_threshold)
     , m_block_insert_max_delay_secs(block_insert_max_delay_secs)
     , m_queue(queue)
@@ -81,11 +85,15 @@ void Processor::handle(WorkItem &wi)
     m_rec_parsers->select_session(wi.session);
     m_rec_parsers->select_odid(wi.odid);
 
+    uint64_t rows_written = 0;
+    uint64_t recs_dropped = 0;
+
     for (const auto &drec_info : wi.drecs) {
         RecParser *parser = m_rec_parsers->get_parser_by_id(drec_info.tmpl_id);
         if (!parser) {
             // TemplateRegister should always arrive before the WorkItem referencing it.
             m_logger.warning("[Processor %d] parser not found for tmpl_id=%u, skipping record", m_id, drec_info.tmpl_id);
+            recs_dropped++;
             continue;
         }
 
@@ -97,26 +105,45 @@ void Processor::handle(WorkItem &wi)
 
         parser->parse_record(drec);
 
-        ensure_block();
-
-        if (!parser->skip_fwd()) {
-            extract_values(*parser, *m_current_block, false, wi.odid);
-            m_stats.add_rows(1);
+        bool skip_fwd = parser->skip_fwd();
+        bool skip_rev = parser->skip_rev();
+        if (skip_fwd && skip_rev) {
+            continue;
         }
-        if (!parser->skip_rev()) {
+
+        if (!ensure_block()) {
+            recs_dropped++;
+            continue;
+        }
+
+        if (!skip_fwd) {
+            extract_values(*parser, *m_current_block, false, wi.odid);
+            rows_written++;
+        }
+        // When splitBiflow=false, suppress the reverse row UNLESS the forward direction was
+        // skipped — fall back to the reverse so a uniflow exported as biflow is still preserved.
+        if (!skip_rev && (m_split_biflow || skip_fwd)) {
             extract_values(*parser, *m_current_block, true, wi.odid);
-            m_stats.add_rows(1);
+            rows_written++;
         }
 
         maybe_flush(false);
+    }
+
+    if (rows_written > 0) {
+        m_stats.add_rows(rows_written);
+    }
+    if (recs_dropped > 0) {
+        m_stats.add_dropped(recs_dropped);
     }
 }
 
 void Processor::handle(TemplateRegister &tr)
 {
     // register_parser deep-copies the template into RecParser and then destroys tr.tmplt.
-    m_rec_parsers->register_parser(tr.session, tr.odid, tr.tmplt);
-    tr.tmplt = nullptr;
+    if (tr.tmplt) {
+        m_rec_parsers->register_parser(tr.session, tr.odid, tr.tmplt.release());
+    }
 }
 
 void Processor::handle(SessionClose &sc)
@@ -184,22 +211,31 @@ void Processor::maybe_flush(bool force)
     if (!m_current_block) return;
     if (m_current_block->rows == 0) return;
 
-    time_t now = std::time(nullptr);
     bool thresh = m_current_block->rows >= m_block_insert_threshold;
-    bool timeout = (m_last_flush_time > 0) && (uint64_t(now - m_last_flush_time) >= m_block_insert_max_delay_secs);
 
-    if (force || thresh || timeout) {
+    if (force || thresh) {
         m_filled_blocks.put(m_current_block);
         m_current_block = nullptr;
-        m_last_flush_time = now;
+        m_last_flush_time = std::time(nullptr);
     }
 }
 
-void Processor::ensure_block()
+bool Processor::ensure_block()
 {
-    if (m_current_block) return;
-    m_current_block = m_avail_blocks.get();
+    if (m_current_block) return true;
+
+    if (m_nonblocking) {
+        auto block = m_avail_blocks.try_get();
+        if (!block.has_value()) {
+            return false;
+        }
+        m_current_block = block.value();
+    } else {
+        m_current_block = m_avail_blocks.get();
+    }
+
     if (m_last_flush_time == 0) {
         m_last_flush_time = std::time(nullptr);
     }
+    return true;
 }

@@ -12,6 +12,14 @@ set(CH_VERSION_PATCH 0)
 set(CH_VERSION
     ${CH_VERSION_MAJOR}.${CH_VERSION_MINOR}.${CH_VERSION_PATCH})
 
+# Set default build type if not specified by user
+if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release
+        CACHE STRING "Choose type of build (Release/Debug)." FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+        "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
+
 include(CMakeModules/install_dirs.cmake)
 include(CMakeModules/clickhouse-cpp.cmake)
 include(CMakeModules/fmt.cmake)
@@ -22,12 +30,6 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMakeModules")
 
 # Find IPFIXcol
 find_package(IPFIXcol2 2.3.0 REQUIRED)
-
-# Set default build type if not specified by user
-if (NOT CMAKE_BUILD_TYPE)
-    set (CMAKE_BUILD_TYPE Debug
-        CACHE STRING "Choose type of build (Release/Debug)." FORCE)
-endif()
 
 option(ENABLE_DOC_MANPAGE    "Enable manual page building"              ON)
 

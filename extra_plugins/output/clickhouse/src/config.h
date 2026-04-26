@@ -22,6 +22,11 @@ enum class SpecialField {
     ODID,
 };
 
+enum class ProcessorDispatchMode {
+    RoundRobin,
+    Session,
+};
+
 /**
  * @class Config
  * @brief A struct containing all the configurable plugin parameters
@@ -58,6 +63,7 @@ struct Config {
     bool nonblocking = true;
     uint64_t processor_threads = 0;       // 0 = inline (legacy single-threaded) mode
     uint64_t processor_queue_depth = 256; // bounded queue depth per processor worker
+    ProcessorDispatchMode processor_dispatch_mode = ProcessorDispatchMode::RoundRobin;
 };
 
 /**

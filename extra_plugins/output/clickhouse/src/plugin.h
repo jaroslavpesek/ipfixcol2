@@ -24,7 +24,7 @@
 #include <ipfixcol2.h>
 #include <libfds.h>
 #include <memory>
-#include <unordered_set>
+#include <unordered_map>
 
 
 /**
@@ -77,8 +77,7 @@ private:
     std::vector<std::unique_ptr<Processor>> m_processors;
     std::vector<std::unique_ptr<BoundedQueue<ProcItem>>> m_proc_queues;
 
-    // Tracks (session*, odid, tmpl_id) already delivered to each worker as TemplateRegister.
-    // Shard routing is hash(session*) % N so each (session, *) belongs to one worker.
+    // Tracks the last template generation delivered by the dispatcher.
     struct TemplateKey {
         const ipx_session *session;
         uint32_t           odid;
@@ -95,7 +94,10 @@ private:
             return h;
         }
     };
-    std::unordered_set<TemplateKey, TemplateKeyHash> m_known_templates;
+    std::unordered_map<TemplateKey, FdsTemplatePtr, TemplateKeyHash> m_known_templates;
+
+    std::vector<uint64_t> m_proc_record_counts;
+    std::size_t m_next_proc_queue = 0;
 
     Stats m_stats;
 
@@ -107,6 +109,15 @@ private:
 
     void
     process_session_msg(ipx_msg_session_t *msg);
+
+    std::size_t
+    select_processor_shard(const ipx_session *session);
+
+    bool
+    enqueue_proc_item(std::size_t shard, ProcItem item);
+
+    bool
+    register_template(const ipx_session *session, uint32_t odid, const fds_template *tmplt, std::size_t shard);
 
     int
     process_record(ipx_msg_ipfix_t *msg, fds_drec &rec, Block &block);

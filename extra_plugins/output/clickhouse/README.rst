@@ -176,6 +176,7 @@ Example configuration
             </connection>
             <inserterThreads>8</inserterThreads>
             <processorThreads>4</processorThreads>
+            <processorDispatchMode>roundRobin</processorDispatchMode>
             <blocks>64</blocks>
             <blockInsertThreshold>100000</blockInsertThreshold>
             <splitBiflow>true</splitBiflow>
@@ -314,6 +315,14 @@ Parameters
     space is available, naturally propagating back-pressure upstream. When
     ``nonblocking`` is true, the excess records are dropped. [default: 256]
 
+:``processorDispatchMode``:
+    How IPFIX messages are distributed between processor workers. ``roundRobin``
+    sends consecutive messages to consecutive workers and broadcasts template
+    updates to all workers, which is usually best for high-rate UDP inputs with
+    one long-lived exporter session. ``session`` keeps all records from one
+    exporter session on one worker and is available as a compatibility/rollback
+    mode. [default: roundRobin]
+
 :``columns``:
     The fields that each row will consist of.
 
@@ -365,23 +374,29 @@ performance at the cost of higher memory usage:
 If a single CPU core cannot drain the input ring fast enough (visible as
 increasing UDP receive-buffer errors), enable parallel record processing by
 setting ``processorThreads`` to the number of worker threads. The output thread
-becomes a lightweight dispatcher; each worker independently parses records and
-builds ClickHouse blocks. Records from the same exporter session are always
-handled by the same worker, preserving template and biflow ordering. The
-``blocks`` pool is automatically enlarged to ``max(blocks, 2 * (processorThreads
-+ inserterThreads))`` so that all workers and inserters can hold a block
-concurrently.
+becomes a dispatcher; each worker independently parses records and builds
+ClickHouse blocks. The default ``processorDispatchMode`` is ``roundRobin``,
+which spreads traffic from a single long-lived UDP session across workers and
+broadcasts template updates to preserve parser correctness. The ``session``
+dispatch mode keeps records from the same exporter session on one worker and is
+mostly useful for rollback compatibility. The ``blocks`` pool is automatically
+enlarged to ``max(blocks, 2 * (processorThreads + inserterThreads))`` so that
+all workers and inserters can hold a block concurrently.
 
 .. code-block:: xml
 
     <processorThreads>4</processorThreads>
     <processorQueueDepth>256</processorQueueDepth>
+    <processorDispatchMode>roundRobin</processorDispatchMode>
     <inserterThreads>16</inserterThreads>
     <blocks>128</blocks>
     <blockInsertThreshold>500000</blockInsertThreshold>
 
 You can further experiment with the values based on your input characteristics
-and your machine specifications.
+and your machine specifications. The plugin does not provide a disk-backed
+spool; if ClickHouse or downstream processing is stalled for longer than the
+configured in-memory queues can absorb, ``nonblocking=false`` will eventually
+back-pressure the collector and UDP input can still be lost in the kernel.
 
 Schema helper
 --------------

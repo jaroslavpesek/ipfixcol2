@@ -12,8 +12,10 @@
 #include "plugin.h"
 
 #include <cassert>
+#include <cstring>
 #include <ipfixcol2.h>
 #include <libfds.h>
+#include <new>
 
 static std::vector<Column> prepare_columns(std::vector<Config::Column> &columns_cfg)
 {
@@ -58,6 +60,15 @@ static std::vector<Column> prepare_columns(std::vector<Config::Column> &columns_
     }
 
     return columns;
+}
+
+static FdsTemplatePtr copy_template(const fds_template *tmplt)
+{
+    FdsTemplatePtr copy(fds_template_copy(tmplt));
+    if (!copy) {
+        throw std::bad_alloc{};
+    }
+    return copy;
 }
 
 
@@ -133,6 +144,7 @@ Plugin::Plugin(ipx_ctx_t *ctx, const char *xml_config)
             m_proc_queues.push_back(
                 std::make_unique<BoundedQueue<ProcItem>>(m_config.processor_queue_depth));
         }
+        m_proc_record_counts.resize(static_cast<std::size_t>(n_proc), 0);
 
         for (unsigned int i = 0; i < n_proc; i++) {
             m_processors.push_back(std::make_unique<Processor>(
@@ -144,6 +156,8 @@ Plugin::Plugin(ipx_ctx_t *ctx, const char *xml_config)
                 m_avail_blocks,
                 m_filled_blocks,
                 m_config.biflow_empty_autoignore,
+                m_config.split_biflow,
+                m_config.nonblocking,
                 m_config.block_insert_threshold,
                 m_config.block_insert_max_delay_secs,
                 *m_proc_queues[i]));
@@ -232,12 +246,17 @@ Plugin::process_record(ipx_msg_ipfix_t *msg, fds_drec &rec, Block &block)
     RecParser &parser = m_rec_parsers->get_parser(rec.tmplt);
     parser.parse_record(rec);
 
-    if (!parser.skip_fwd()) {
+    bool skip_fwd = parser.skip_fwd();
+    bool skip_rev = parser.skip_rev();
+
+    if (!skip_fwd) {
         extract_values(msg, parser, block, false);
         ret++;
     }
 
-    if (!parser.skip_rev()) {
+    // When splitBiflow=false, suppress the reverse row UNLESS the forward direction was
+    // skipped — fall back to the reverse so a uniflow exported as biflow is still preserved.
+    if (!skip_rev && (m_config.split_biflow || skip_fwd)) {
         extract_values(msg, parser, block, true);
         ret++;
     }
@@ -253,20 +272,87 @@ Plugin::process_session_msg(ipx_msg_session_t *msg)
     const ipx_session *sess = ipx_msg_session_get_session(msg);
 
     if (!m_processors.empty()) {
-        // Parallel path: remove from known-template set, then FIFO-deliver to owner worker.
+        // Parallel path: remove cached templates and deliver close to workers that may own parser state.
         for (auto it = m_known_templates.begin(); it != m_known_templates.end(); ) {
-            if (it->session == sess) {
+            if (it->first.session == sess) {
                 it = m_known_templates.erase(it);
             } else {
                 ++it;
             }
         }
-        // Route to owning worker (same hash as used for WorkItems).
-        std::size_t shard = std::hash<const void *>{}(sess) % m_proc_queues.size();
-        m_proc_queues[shard]->put(ProcItem{SessionClose{sess}});
+
+        if (m_config.processor_dispatch_mode == ProcessorDispatchMode::RoundRobin) {
+            for (std::size_t shard = 0; shard < m_proc_queues.size(); shard++) {
+                enqueue_proc_item(shard, ProcItem{SessionClose{sess}});
+            }
+        } else {
+            std::size_t shard = std::hash<const void *>{}(sess) % m_proc_queues.size();
+            enqueue_proc_item(shard, ProcItem{SessionClose{sess}});
+        }
     } else {
         m_rec_parsers->delete_session(sess);
     }
+}
+
+std::size_t
+Plugin::select_processor_shard(const ipx_session *session)
+{
+    if (m_config.processor_dispatch_mode == ProcessorDispatchMode::Session) {
+        return std::hash<const void *>{}(session) % m_proc_queues.size();
+    }
+
+    std::size_t shard = m_next_proc_queue % m_proc_queues.size();
+    m_next_proc_queue++;
+    return shard;
+}
+
+bool
+Plugin::enqueue_proc_item(std::size_t shard, ProcItem item)
+{
+    if (m_config.nonblocking) {
+        if (!m_proc_queues[shard]->try_put(std::move(item))) {
+            m_stats.add_enqueue_drop();
+            return false;
+        }
+    } else {
+        m_proc_queues[shard]->put(std::move(item));
+    }
+
+    return true;
+}
+
+bool
+Plugin::register_template(const ipx_session *session, uint32_t odid, const fds_template *tmplt, std::size_t shard)
+{
+    TemplateKey key{session, odid, tmplt->id};
+    auto known = m_known_templates.find(key);
+    if (known != m_known_templates.end() && fds_template_cmp(known->second.get(), tmplt) == 0) {
+        return true;
+    }
+
+    auto enqueue_register = [&](std::size_t target) {
+        ProcItem item{TemplateRegister{session, odid, tmplt->id, copy_template(tmplt)}};
+        if (!enqueue_proc_item(target, std::move(item))) {
+            return false;
+        }
+        m_stats.add_template_broadcast();
+        return true;
+    };
+
+    if (m_config.processor_dispatch_mode == ProcessorDispatchMode::RoundRobin) {
+        for (std::size_t target = 0; target < m_proc_queues.size(); target++) {
+            if (!enqueue_register(target)) {
+                return false;
+            }
+        }
+    } else {
+        if (!enqueue_register(shard)) {
+            return false;
+        }
+    }
+
+    m_known_templates[key] = copy_template(tmplt);
+    return true;
 }
 
 void
@@ -319,22 +405,18 @@ Plugin::process_ipfix_msg_parallel(ipx_msg_ipfix_t *msg)
     const ipx_session *session = msg_ctx->session;
     uint32_t odid = msg_ctx->odid;
     uint32_t drec_cnt = ipx_msg_ipfix_get_drec_cnt(msg);
-    std::size_t shard = std::hash<const void *>{}(session) % m_proc_queues.size();
-    auto &queue = *m_proc_queues[shard];
+    std::size_t shard = select_processor_shard(session);
 
     m_stats.add_recs(drec_cnt);
 
-    // Pass 1: ensure worker knows all templates in this message (before enqueuing WorkItem).
+    // Pass 1: ensure workers know all templates in this message before any WorkItem.
     for (uint32_t idx = 0; idx < drec_cnt; idx++) {
         ipx_ipfix_record *rec = ipx_msg_ipfix_get_drec(msg, idx);
         if (rec->rec.tmplt->type == FDS_TYPE_TEMPLATE_OPTS) continue;
 
-        TemplateKey key{session, odid, rec->rec.tmplt->id};
-        if (m_known_templates.find(key) == m_known_templates.end()) {
-            fds_template *copy = fds_template_copy(rec->rec.tmplt);
-            if (!copy) throw std::bad_alloc{};
-            queue.put(ProcItem{TemplateRegister{session, odid, rec->rec.tmplt->id, copy}});
-            m_known_templates.insert(key);
+        if (!register_template(session, odid, rec->rec.tmplt, shard)) {
+            m_stats.add_dropped(drec_cnt);
+            return;
         }
     }
 
@@ -368,11 +450,16 @@ Plugin::process_ipfix_msg_parallel(ipx_msg_ipfix_t *msg)
     wi.odid    = odid;
 
     if (m_config.nonblocking) {
-        if (!queue.try_put(ProcItem{std::move(wi)})) {
+        std::size_t records = wi.drecs.size();
+        if (enqueue_proc_item(shard, ProcItem{std::move(wi)})) {
+            m_proc_record_counts[shard] += records;
+        } else {
             m_stats.add_dropped(drec_cnt);
         }
     } else {
-        queue.put(ProcItem{std::move(wi)});
+        std::size_t records = wi.drecs.size();
+        enqueue_proc_item(shard, ProcItem{std::move(wi)});
+        m_proc_record_counts[shard] += records;
     }
 }
 
@@ -409,8 +496,8 @@ Plugin::process(ipx_msg_t *msg)
     } else {
         // Parallel path: broadcast PeriodicFlush to all workers once per timeout period.
         if (uint64_t(now - m_last_insert_time) >= m_config.block_insert_max_delay_secs) {
-            for (auto &q : m_proc_queues) {
-                q->put(ProcItem{PeriodicFlush{}});
+            for (std::size_t shard = 0; shard < m_proc_queues.size(); shard++) {
+                enqueue_proc_item(shard, ProcItem{PeriodicFlush{}});
             }
             m_last_insert_time = now;
         }

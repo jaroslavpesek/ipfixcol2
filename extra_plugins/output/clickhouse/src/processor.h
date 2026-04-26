@@ -26,6 +26,17 @@
 #include <variant>
 #include <vector>
 
+struct FdsTemplateDeleter {
+    void operator()(fds_template *tmplt) const
+    {
+        if (tmplt) {
+            fds_template_destroy(tmplt);
+        }
+    }
+};
+
+using FdsTemplatePtr = std::unique_ptr<fds_template, FdsTemplateDeleter>;
+
 // ---------------------------------------------------------------------------
 // Work-item types enqueued by the dispatcher to each Processor worker.
 // ---------------------------------------------------------------------------
@@ -56,7 +67,7 @@ struct TemplateRegister {
     const ipx_session *session;
     uint32_t           odid;
     uint16_t           tmpl_id; // informational; also in tmplt->id
-    fds_template      *tmplt;   // owned; worker must call fds_template_destroy
+    FdsTemplatePtr     tmplt;   // owned by the work item until the worker consumes it
 };
 
 /** Session closed: worker must purge all parsers for this session. */
@@ -99,6 +110,8 @@ public:
         SyncQueue<Block *>         &avail_blocks,
         SyncQueue<Block *>         &filled_blocks,
         bool                        biflow_autoignore,
+        bool                        split_biflow,
+        bool                        nonblocking,
         uint64_t                    block_insert_threshold,
         uint64_t                    block_insert_max_delay_secs,
         BoundedQueue<ProcItem>     &queue);
@@ -112,6 +125,8 @@ private:
     SyncQueue<Block *>        &m_avail_blocks;
     SyncQueue<Block *>        &m_filled_blocks;
     bool                       m_biflow_autoignore;
+    bool                       m_split_biflow;
+    bool                       m_nonblocking;
     uint64_t                   m_block_insert_threshold;
     uint64_t                   m_block_insert_max_delay_secs;
     BoundedQueue<ProcItem>    &m_queue;
@@ -133,5 +148,5 @@ private:
     void maybe_flush(bool force);
 
     /** Acquire a block from the pool if we don't have one yet. */
-    void ensure_block();
+    bool ensure_block();
 };

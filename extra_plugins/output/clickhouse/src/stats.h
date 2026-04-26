@@ -56,6 +56,10 @@ public:
      */
     void add_dropped(uint64_t count);
 
+    void add_enqueue_drop(uint64_t count = 1);
+
+    void add_template_broadcast(uint64_t count = 1);
+
     /**
      * @brief Prints the statistics if sufficient time has passed since the last print.
      */
@@ -68,6 +72,8 @@ private:
     std::atomic<uint64_t> m_recs_processed_total{0}; ///< Total number of records processed.
     std::atomic<uint64_t> m_recs_processed_since_last{0}; ///< Records processed since the last statistics print.
     std::atomic<uint64_t> m_recs_dropped_total{0}; ///< Total number of records dropped.
+    std::atomic<uint64_t> m_enqueue_drops_total{0}; ///< Queue enqueue attempts that failed in nonblocking mode.
+    std::atomic<uint64_t> m_template_broadcasts_total{0}; ///< Template register items enqueued to processors.
     time_t m_start_time = 0; ///< Start time of the statistics tracking.
     time_t m_last_stats_print_time = 0; ///< Time of the last statistics print.
 };
