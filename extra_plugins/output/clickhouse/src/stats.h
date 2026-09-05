@@ -11,6 +11,7 @@
 #pragma once
 
 #include "common.h"
+#include <ipfixcol2.h>
 #include <atomic>
 #include <cstdint>
 #include <ctime>
@@ -30,10 +31,11 @@ public:
     /**
      * @brief Constructs a Stats object.
      *
+     * @param ctx    Plugin context the metric series are registered under.
      * @param logger A Logger instance for logging statistics.
      * @param plugin A reference to the Plugin instance associated with this Stats object.
      */
-    Stats(Logger logger, Plugin& plugin);
+    Stats(const ipx_ctx_t *ctx, Logger logger, Plugin& plugin);
 
     /**
      * @brief Adds a specified number of records to the processed count.
@@ -61,6 +63,18 @@ public:
     void add_template_broadcast(uint64_t count = 1);
 
     /**
+     * @brief Counts one field conversion error.
+     * @return true while the caller is still expected to log it (the first few only).
+     */
+    bool add_conversion_error();
+
+    /** @brief Counts one successful insert of @p rows rows that took @p millis ms. */
+    void add_insert(uint64_t rows, uint64_t millis);
+
+    /** @brief Counts one failed insert attempt (the inserter retries it). */
+    void add_insert_error();
+
+    /**
      * @brief Prints the statistics if sufficient time has passed since the last print.
      */
     void print_stats_throttled(time_t now);
@@ -68,12 +82,14 @@ public:
 private:
     Logger m_logger; ///< Logger instance for logging statistics.
     Plugin &m_plugin; ///< Reference to the associated Plugin instance.
-    std::atomic<uint64_t> m_rows_written_total{0}; ///< Total number of rows written.
-    std::atomic<uint64_t> m_recs_processed_total{0}; ///< Total number of records processed.
     std::atomic<uint64_t> m_recs_processed_since_last{0}; ///< Records processed since the last statistics print.
-    std::atomic<uint64_t> m_recs_dropped_total{0}; ///< Total number of records dropped.
-    std::atomic<uint64_t> m_enqueue_drops_total{0}; ///< Queue enqueue attempts that failed in nonblocking mode.
-    std::atomic<uint64_t> m_template_broadcasts_total{0}; ///< Template register items enqueued to processors.
+    std::atomic<uint64_t> m_conversion_errors{0}; ///< Field conversion errors seen (drives the log cap).
+    /// Registry series; the totals live only here (see ipfixcol2/metrics.h).
+    struct {
+        ipx_metric_t *recs, *rows, *dropped, *enqueue_drops, *template_broadcasts, *conversion_errors;
+        ipx_metric_t *inserts, *insert_errors, *rows_inserted, *insert_millis;
+        ipx_metric_t *blocks_avail, *blocks_filled, *blocks_total, *proc_queue, *proc_queue_max;
+    } m_m{};
     time_t m_start_time = 0; ///< Start time of the statistics tracking.
     time_t m_last_stats_print_time = 0; ///< Time of the last statistics print.
 };

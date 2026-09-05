@@ -7,7 +7,7 @@ set(CH_DESCRIPTION
 )
 
 set(CH_VERSION_MAJOR 1)
-set(CH_VERSION_MINOR 0)
+set(CH_VERSION_MINOR 1)
 set(CH_VERSION_PATCH 0)
 set(CH_VERSION
     ${CH_VERSION_MAJOR}.${CH_VERSION_MINOR}.${CH_VERSION_PATCH})
@@ -29,7 +29,7 @@ include(CheckCXXCompilerFlag)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMakeModules")
 
 # Find IPFIXcol
-find_package(IPFIXcol2 2.3.0 REQUIRED)
+find_package(IPFIXcol2 2.9.0 REQUIRED)
 
 option(ENABLE_DOC_MANPAGE    "Enable manual page building"              ON)
 

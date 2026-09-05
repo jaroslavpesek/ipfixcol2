@@ -398,6 +398,34 @@ spool; if ClickHouse or downstream processing is stalled for longer than the
 configured in-memory queues can absorb, ``nonblocking=false`` will eventually
 back-pressure the collector and UDP input can still be lost in the kernel.
 
+Metrics
+-------
+
+With the collector's ``<metrics>`` endpoint enabled (see the IPFIXcol2
+configuration manual), the plugin reports these series, labeled with the
+instance name (``ipx_instance``) and ``ipx_plugin="clickhouse"``:
+
+- ``ipfixcol2_clickhouse_records_total`` data records received, and
+  ``ipfixcol2_clickhouse_records_dropped_total`` records dropped because no
+  block was free (``nonblocking`` mode);
+- ``ipfixcol2_clickhouse_rows_total`` rows built into blocks (biflow splitting
+  can make it larger than the record count);
+- ``ipfixcol2_clickhouse_inserts_total``, ``ipfixcol2_clickhouse_rows_inserted_total``,
+  ``ipfixcol2_clickhouse_insert_milliseconds_total`` inserts ClickHouse
+  acknowledged, and ``ipfixcol2_clickhouse_insert_errors_total`` failed attempts
+  (each is retried, so the rows are not lost unless the collector stops);
+- ``ipfixcol2_clickhouse_conversion_errors_total`` field conversion errors
+  (the first 100 are also logged, the rest only counted);
+- ``ipfixcol2_clickhouse_blocks_available``, ``ipfixcol2_clickhouse_blocks_filled``,
+  ``ipfixcol2_clickhouse_blocks_total`` block pool occupancy, and
+  ``ipfixcol2_clickhouse_processor_queue_items`` (``_max``) the processor queue
+  depth; both refresh with the ``STATS`` log line, once a second;
+- ``ipfixcol2_clickhouse_enqueue_drops_total`` and
+  ``ipfixcol2_clickhouse_template_broadcasts_total`` for the parallel path.
+
+"Records parsed" is the collector's ``ipfixcol2_parser_data_records_total``;
+"rows stored" is ``ipfixcol2_clickhouse_rows_inserted_total``.
+
 Schema helper
 --------------
 

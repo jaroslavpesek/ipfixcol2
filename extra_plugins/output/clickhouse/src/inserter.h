@@ -14,6 +14,7 @@
 #include "block.h"
 #include "syncqueue.h"
 #include "column.h"
+#include "stats.h"
 
 /**
  * @class Inserter
@@ -30,6 +31,7 @@ public:
      * @param columns Reference to the vector of columns defining the table schema.
      * @param input_blocks Reference to the queue of input blocks to be inserted.
      * @param avail_blocks Reference to the queue of available blocks for reuse.
+     * @param stats Shared statistics the inserter reports insert results to.
      */
     Inserter(
         int id,
@@ -38,7 +40,8 @@ public:
         std::string table_name,
         const std::vector<Column> &columns,
         SyncQueue<Block *> &input_blocks,
-        SyncQueue<Block *> &avail_blocks);
+        SyncQueue<Block *> &avail_blocks,
+        Stats &stats);
 
 private:
     int m_id; ///< Unique identifier for the inserter.
@@ -48,6 +51,7 @@ private:
     const std::vector<Column> &m_columns; ///< Reference to the vector of columns defining the table schema.
     SyncQueue<Block *> &m_input_blocks; ///< Reference to the queue of input blocks to be inserted.
     SyncQueue<Block *> &m_avail_blocks; ///< Reference to the queue of available blocks for reuse.
+    Stats &m_stats; ///< Shared statistics.
     std::unique_ptr<clickhouse::Client> m_client; ///< Pointer to the ClickHouse client instance.
 
     void run() override;

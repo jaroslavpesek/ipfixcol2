@@ -171,8 +171,10 @@ void Processor::extract_values(RecParser &parser, Block &block, bool rev, uint32
                                          field, *block.columns[i], m_iemgr,
                                          block.list_scratch[i]);
                 } catch (const ConversionError &err) {
-                    m_logger.error("[Processor %d] List field conversion failed (field #%zu, \"%s\"): %s",
-                                   m_id, i, m_columns[i].name.c_str(), err.what());
+                    if (m_stats.add_conversion_error()) {
+                        m_logger.error("[Processor %d] List field conversion failed (field #%zu, \"%s\"): %s",
+                                       m_id, i, m_columns[i].name.c_str(), err.what());
+                    }
                     write_empty_list_to_column(*block.columns[i], block.list_scratch[i]);
                 }
             } else {
@@ -193,8 +195,10 @@ void Processor::extract_values(RecParser &parser, Block &block, bool rev, uint32
                     value = get_value(m_columns[i].datatype, field);
                     has_value = true;
                 } catch (const ConversionError &err) {
-                    m_logger.error("[Processor %d] Field conversion failed (field #%zu, \"%s\"): %s",
-                                   m_id, i, m_columns[i].name.c_str(), err.what());
+                    if (m_stats.add_conversion_error()) {
+                        m_logger.error("[Processor %d] Field conversion failed (field #%zu, \"%s\"): %s",
+                                       m_id, i, m_columns[i].name.c_str(), err.what());
+                    }
                 }
             }
         }

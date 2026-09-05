@@ -74,7 +74,7 @@ static FdsTemplatePtr copy_template(const fds_template *tmplt)
 
 Plugin::Plugin(ipx_ctx_t *ctx, const char *xml_config)
     : m_logger(ctx)
-    , m_stats(m_logger, *this)
+    , m_stats(ctx, m_logger, *this)
 {
     // Subscribe to periodic messages as well to ensure data export even when no data is coming
     ipx_msg_mask_t new_mask = IPX_MSG_IPFIX | IPX_MSG_PERIODIC | IPX_MSG_SESSION;
@@ -133,7 +133,8 @@ Plugin::Plugin(ipx_ctx_t *ctx, const char *xml_config)
             m_config.connection.table,
             m_columns,
             m_filled_blocks,
-            m_avail_blocks);
+            m_avail_blocks,
+            m_stats);
 
         m_inserters.emplace_back(std::move(ins));
     }
@@ -201,8 +202,10 @@ void Plugin::extract_values(ipx_msg_ipfix_t *msg, RecParser &parser, Block &bloc
                                          field, *block.columns[i].get(), m_iemgr,
                                          block.list_scratch[i]);
                 } catch (const ConversionError& err) {
-                    m_logger.error("List field conversion failed (field #%zu, \"%s\"): %s",
-                                   i, m_columns[i].name.c_str(), err.what());
+                    if (m_stats.add_conversion_error()) {
+                        m_logger.error("List field conversion failed (field #%zu, \"%s\"): %s",
+                                       i, m_columns[i].name.c_str(), err.what());
+                    }
                     write_empty_list_to_column(*block.columns[i].get(), block.list_scratch[i]);
                 }
             } else {
@@ -224,8 +227,10 @@ void Plugin::extract_values(ipx_msg_ipfix_t *msg, RecParser &parser, Block &bloc
                     value = get_value(m_columns[i].datatype, field);
                     has_value = true;
                 } catch (const ConversionError& err) {
-                    m_logger.error("Field conversion failed (field #%zu, \"%s\"): %s",
-                                   i, m_columns[i].name.c_str(), err.what());
+                    if (m_stats.add_conversion_error()) {
+                        m_logger.error("Field conversion failed (field #%zu, \"%s\"): %s",
+                                       i, m_columns[i].name.c_str(), err.what());
+                    }
                 }
             }
         }

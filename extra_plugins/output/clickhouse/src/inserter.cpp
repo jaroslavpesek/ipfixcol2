@@ -9,6 +9,7 @@
  */
 
 #include "inserter.h"
+#include <chrono>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -87,7 +88,8 @@ Inserter::Inserter(
         std::string table_name,
         const std::vector<Column> &columns,
         SyncQueue<Block *> &input_blocks,
-        SyncQueue<Block *> &avail_blocks)
+        SyncQueue<Block *> &avail_blocks,
+        Stats &stats)
     : m_id(id)
     , m_logger(logger)
     , m_client_opts(client_opts)
@@ -95,6 +97,7 @@ Inserter::Inserter(
     , m_columns(columns)
     , m_input_blocks(input_blocks)
     , m_avail_blocks(avail_blocks)
+    , m_stats(stats)
 {}
 
 bool Inserter::insert(clickhouse::Block &block)
@@ -113,10 +116,14 @@ bool Inserter::insert(clickhouse::Block &block)
                               m_client->GetCurrentEndpoint()->host.c_str(), m_client->GetCurrentEndpoint()->port);
             }
             m_logger.debug("[Worker %d] Inserting %d rows", m_id, block.GetRowCount());
+            auto started = std::chrono::steady_clock::now();
             m_client->Insert(m_table_name, block);
+            m_stats.add_insert(block.GetRowCount(), std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count());
             break;
 
         } catch (const std::exception &ex) {
+            m_stats.add_insert_error();
             m_logger.error("[Worker %d] Insert failed: %s - retrying in 1 second", m_id, ex.what());
             needs_reconnect = true;
         }
