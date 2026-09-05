@@ -378,6 +378,7 @@ void
 ipx_ctx_ring_src_set(ipx_ctx_t *ctx, ipx_ring_t *ring)
 {
     ctx->pipeline.src = ring;
+    ipx_ring_metrics_set(ring, ctx->name);
 }
 
 void

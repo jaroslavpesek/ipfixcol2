@@ -66,6 +66,7 @@
 #include <ipfixcol2/session.h>
 #include <ipfixcol2/utils.h>
 #include <ipfixcol2/verbose.h>
+#include <ipfixcol2/metrics.h>
 
 
 #endif /* IPFIXCOL2_H_ */

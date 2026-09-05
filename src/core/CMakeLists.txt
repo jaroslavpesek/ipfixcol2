@@ -59,6 +59,7 @@ set(CORE_SOURCE
     session.c
     verbose.c
     verbose.h
+    metrics.c
     utils.c
     utils.h
 

@@ -53,6 +53,8 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <stdio.h>
 #include "config.h"
 
 /** Identification of an invalid socket descriptor                                               */
@@ -184,6 +186,15 @@ struct udp_data {
         /** Array of active sources (identification and corresponding Transport Session)         */
         struct udp_source **sources;
     } active; /**< Active connections                                                            */
+
+    struct {
+        ipx_metric_t *datagrams;
+        ipx_metric_t *bytes;
+        ipx_metric_t *invalid;
+        ipx_metric_t *sessions;
+        ipx_metric_t *kdrops;
+        ipx_metric_t *rx_queue;
+    } m; /**< Metrics                                                                            */
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -887,6 +898,54 @@ active_sort_and_reset(struct udp_data *instance)
 }
 
 /**
+ * \brief Mirror the kernel drop and receive-queue counters of the instance sockets
+ *
+ * Rows of /proc/net/udp and /proc/net/udp6 are matched to the sockets by inode.
+ * \param[in] instance Instance data
+ */
+static void
+kernel_stats_read(struct udp_data *instance)
+{
+    // ponytail: Linux only; an unreadable /proc file leaves the values unchanged
+    if (instance->listen.cnt == 0) {
+        return;
+    }
+    unsigned long inodes[instance->listen.cnt];
+    for (size_t i = 0; i < instance->listen.cnt; ++i) {
+        struct stat st;
+        inodes[i] = fstat(instance->listen.sockets[i], &st) == 0 ? (unsigned long) st.st_ino : 0;
+    }
+
+    uint64_t drops = 0;
+    uint64_t rx_queue = 0;
+    const char *files[] = {"/proc/net/udp", "/proc/net/udp6"};
+    for (size_t f = 0; f < 2; ++f) {
+        FILE *fp = fopen(files[f], "r");
+        if (!fp) {
+            continue;
+        }
+        char line[512];
+        while (fgets(line, sizeof(line), fp)) {
+            unsigned rxq, drop;
+            unsigned long inode;
+            if (sscanf(line, "%*s %*s %*s %*s %*x:%x %*s %*s %*s %*s %lu %*s %*s %u",
+                    &rxq, &inode, &drop) != 3) {
+                continue;
+            }
+            for (size_t i = 0; i < instance->listen.cnt; ++i) {
+                if (inodes[i] == inode) {
+                    drops += drop;
+                    rx_queue += rxq;
+                }
+            }
+        }
+        fclose(fp);
+    }
+    ipx_metric_set(instance->m.kdrops, drops);
+    ipx_metric_set(instance->m.rx_queue, rx_queue);
+}
+
+/**
  * \brief Process a timer event
  *
  * Sort all sources by their activity (number of messages sent between timer events) and
@@ -931,6 +990,8 @@ process_timer(struct udp_data *instance, int fd)
 
     IPX_CTX_DEBUG(instance->ctx, "The instance holds information about %zu active session(s).",
         instance->active.cnt);
+    ipx_metric_set(instance->m.sessions, instance->active.cnt);
+    kernel_stats_read(instance);
 }
 
 /**
@@ -978,6 +1039,8 @@ process_socket(struct udp_data *instance, int sd)
         }
 
         IPX_CTX_WARNING(instance->ctx, "Received an invalid datagram (%d bytes long)", msg_size);
+        ipx_metric_add(instance->m.datagrams, 1);
+        ipx_metric_add(instance->m.invalid, 1);
         return;
     }
 
@@ -999,6 +1062,8 @@ process_socket(struct udp_data *instance, int sd)
         free(buffer);
         return;
     }
+    ipx_metric_add(instance->m.datagrams, 1);
+    ipx_metric_add(instance->m.bytes, (uint64_t) ret);
 
     if (ret != msg_size) {
         IPX_CTX_ERROR(instance->ctx, "Read operation failed! Got %zu of %zu bytes!",
@@ -1053,6 +1118,7 @@ process_socket(struct udp_data *instance, int sd)
     if (!is_len_ok) {
         IPX_CTX_ERROR(instance->ctx, "Receiver an invalid NetFlow/IPFIX Message header from '%s'. "
             "The message will be dropped!", source->session->ident);
+        ipx_metric_add(instance->m.invalid, 1);
         free(buffer);
         return;
     }
@@ -1101,6 +1167,21 @@ ipx_plugin_init(ipx_ctx_t *ctx, const char *params)
     data->ctx = ctx;
     data->active.cnt = 0;
     data->active.sources = NULL;
+
+#define UDP_METRIC(type, name, help) ipx_ctx_metric_new(ctx, (type), (name), (help), NULL, 0)
+    data->m.datagrams = UDP_METRIC(IPX_METRIC_COUNTER, "ipfixcol2_udp_datagrams_received_total",
+        "Datagrams read from the sockets");
+    data->m.bytes = UDP_METRIC(IPX_METRIC_COUNTER, "ipfixcol2_udp_bytes_received_total",
+        "Bytes read from the sockets");
+    data->m.invalid = UDP_METRIC(IPX_METRIC_COUNTER, "ipfixcol2_udp_datagrams_invalid_total",
+        "Datagrams dropped for a malformed or unknown message header");
+    data->m.sessions = UDP_METRIC(IPX_METRIC_GAUGE, "ipfixcol2_udp_sessions_active",
+        "Transport Sessions seen within the connection timeout");
+    data->m.kdrops = UDP_METRIC(IPX_METRIC_COUNTER, "ipfixcol2_udp_socket_drops_total",
+        "Datagrams the kernel dropped on the sockets (receive buffer full), from /proc/net/udp");
+    data->m.rx_queue = UDP_METRIC(IPX_METRIC_GAUGE, "ipfixcol2_udp_socket_rx_queue_bytes",
+        "Bytes waiting in the kernel receive buffers of the sockets, from /proc/net/udp");
+#undef UDP_METRIC
 
     // Parse configuration
     data->config = config_parse(ctx, params);

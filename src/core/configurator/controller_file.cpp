@@ -22,6 +22,8 @@ enum file_xml_nodes {
     LIST_INPUTS = 1,
     LIST_INTER,
     LIST_OUTPUT,
+    LIST_METRICS,
+    METRICS_LISTEN,
     // Instances
     INSTANCE_INPUT,
     INSTANCE_INTER,
@@ -107,6 +109,12 @@ static const struct fds_xml_args args_list_output[] = {
     FDS_OPTS_END
 };
 
+/** \brief Definition of the \<metrics\> node */
+static const struct fds_xml_args args_metrics[] = {
+    FDS_OPTS_ELEM(METRICS_LISTEN, "listen", FDS_OPTS_T_STRING, FDS_OPTS_P_OPT),
+    FDS_OPTS_END
+};
+
 /**
  * \brief Definition of the main \<ipfixcol2\> node
  * \note
@@ -118,6 +126,7 @@ static const struct fds_xml_args args_main[] = {
     FDS_OPTS_NESTED(LIST_INPUTS, "inputPlugins",        args_list_inputs, FDS_OPTS_P_OPT),
     FDS_OPTS_NESTED(LIST_INTER,  "intermediatePlugins", args_list_inter,  FDS_OPTS_P_OPT),
     FDS_OPTS_NESTED(LIST_OUTPUT, "outputPlugins",       args_list_output, FDS_OPTS_P_OPT),
+    FDS_OPTS_NESTED(LIST_METRICS, "metrics",            args_metrics,     FDS_OPTS_P_OPT),
     FDS_OPTS_END
 };
 
@@ -202,6 +211,15 @@ ipx_controller_file::parse_file(const std::string &path)
         case LIST_OUTPUT:
             parse_list_output(content->ptr_ctx, model);
             break;
+        case LIST_METRICS: {
+            const struct fds_xml_cont *sub;
+            while (fds_xml_next(content->ptr_ctx, &sub) != FDS_EOC) {
+                if (sub->id == METRICS_LISTEN) {
+                    model.metrics_listen = sub->ptr_string;
+                }
+            }
+            break;
+        }
         default:
             // Unexpected XML node within startup <ipfixcol2>!
             assert(false);

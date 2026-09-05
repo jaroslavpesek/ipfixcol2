@@ -88,6 +88,9 @@ private:
 
     void check_common(struct ipx_plugin_base *base);
 public:
+    /** Listen address of the metrics endpoint (empty = disabled)              */
+    std::string metrics_listen;
+
     ipx_config_model() = default;
     ~ipx_config_model() = default;
 

@@ -149,6 +149,18 @@ struct ipx_parser {
     size_t recs_valid;
     /** Array of records                           */
     struct parser_rec *recs;
+
+    struct {
+        ipx_metric_t *msgs;
+        ipx_metric_t *msgs_dropped;
+        ipx_metric_t *recs;
+        ipx_metric_t *seq_gaps;
+        ipx_metric_t *seq_gap_recs;
+        ipx_metric_t *seq_old;
+        ipx_metric_t *sets_no_tmplt;
+        ipx_metric_t *sets_unknown;
+        ipx_metric_t *export_time_old;
+    } m; /**< Metrics */
 };
 
 /**
@@ -876,6 +888,7 @@ parser_parse_dset(struct ipx_parser_data *pdata, struct fds_ipfix_set_hdr *dset)
         const struct ipx_msg_ctx *msg_ctx = &pdata->ipfix_msg->ctx;
         PARSER_WARNING(pdata->parser, msg_ctx, "Unable to parse IPFIX Data Set %" PRIu16 " "
             "due to missing (Options) Template.", set_id);
+        ipx_metric_add(pdata->parser->m.sets_no_tmplt, 1);
         return IPX_OK;
     }
 
@@ -974,6 +987,7 @@ parser_parse_message(struct ipx_parser_data *pdata)
             // Unknown Set ID
             const struct ipx_msg_ctx *msg_ctx = &pdata->ipfix_msg->ctx;
             PARSER_WARNING(pdata->parser, msg_ctx, "Skipping unknown Set ID %" PRIu16 ".", set_id);
+            ipx_metric_add(pdata->parser->m.sets_unknown, 1);
             rc_parse = IPX_OK;
         }
 
@@ -1167,6 +1181,28 @@ ipx_parser_create(const char *ident, enum ipx_verb_level vlevel)
     parser->vlevel = vlevel;
     parser->recs_alloc = PARSER_DEF_RECS;
     parser->ie_mgr = NULL;
+
+    const struct ipx_metric_label lbl[] = {{"ipx_instance", ident}, {"ipx_plugin", "IPFIX Parser"}};
+#define PARSER_METRIC(name, help) ipx_metric_new(IPX_METRIC_COUNTER, (name), (help), lbl, 2)
+    parser->m.msgs = PARSER_METRIC("ipfixcol2_parser_messages_total",
+        "IPFIX/NetFlow messages handed to the parser");
+    parser->m.msgs_dropped = PARSER_METRIC("ipfixcol2_parser_messages_dropped_total",
+        "Messages the parser refused (malformed, blocked session, memory)");
+    parser->m.recs = PARSER_METRIC("ipfixcol2_parser_data_records_total",
+        "Data records parsed from accepted messages");
+    parser->m.seq_gaps = PARSER_METRIC("ipfixcol2_parser_sequence_gaps_total",
+        "Messages whose sequence number did not match the expected one");
+    parser->m.seq_gap_recs = PARSER_METRIC("ipfixcol2_parser_sequence_gap_records_total",
+        "Data records missing according to sequence number jumps forward (exporter-side loss)");
+    parser->m.seq_old = PARSER_METRIC("ipfixcol2_parser_sequence_old_total",
+        "Messages older than expected by sequence number (reordered or duplicated)");
+    parser->m.sets_no_tmplt = PARSER_METRIC("ipfixcol2_parser_sets_missing_template_total",
+        "Data Sets skipped because their template is unknown");
+    parser->m.sets_unknown = PARSER_METRIC("ipfixcol2_parser_sets_unknown_total",
+        "Sets skipped because of an unknown Set ID");
+    parser->m.export_time_old = PARSER_METRIC("ipfixcol2_parser_messages_export_time_old_total",
+        "Messages ignored because their Export Time is older than the template history");
+#undef PARSER_METRIC
     return parser;
 }
 
@@ -1207,8 +1243,8 @@ ipx_parser_verb(ipx_parser_t *parser, enum ipx_verb_level *v_new, enum ipx_verb_
     }
 }
 
-int
-ipx_parser_process(ipx_parser_t *parser, ipx_msg_ipfix_t **ipfix, ipx_msg_garbage_t **garbage)
+static int
+parser_process(ipx_parser_t *parser, ipx_msg_ipfix_t **ipfix, ipx_msg_garbage_t **garbage)
 {
     *garbage = NULL;
     const struct ipx_msg_ctx *msg_ctx = &(*ipfix)->ctx;
@@ -1271,9 +1307,12 @@ ipx_parser_process(ipx_parser_t *parser, ipx_msg_ipfix_t **ipfix, ipx_msg_garbag
             // Out of sequence message
             PARSER_WARNING(parser, msg_ctx, "Unexpected Sequence number (expected: "
                 "%" PRIu32 ", got: %" PRIu32 ").", info->seq_num, msg_seq);
+            ipx_metric_add(parser->m.seq_gaps, 1);
             if (parser_seq_num_cmp(msg_seq, info->seq_num) > 0) {
+                ipx_metric_add(parser->m.seq_gap_recs, msg_seq - info->seq_num);
                 info->seq_num = msg_seq; // Newer than expected
             } else {
+                ipx_metric_add(parser->m.seq_old, 1);
                 old_oos = true; // Older than expected
             }
         }
@@ -1295,6 +1334,7 @@ ipx_parser_process(ipx_parser_t *parser, ipx_msg_ipfix_t **ipfix, ipx_msg_garbag
             PARSER_WARNING(parser, msg_ctx, "Received IPFIX Message has too old Export Time. "
                 "Templates are no longer available and therefore, all its data records are "
                 "ignored.", 0);
+            ipx_metric_add(parser->m.export_time_old, 1);
             return IPX_OK;
         case FDS_ERR_NOMEM:
             // Memory allocation failed
@@ -1333,6 +1373,7 @@ ipx_parser_process(ipx_parser_t *parser, ipx_msg_ipfix_t **ipfix, ipx_msg_garbag
 
         return rc;
     }
+    ipx_metric_add(parser->m.recs, parser_data.data_recs);
 
     // Update expected Sequence number of the next message
     if (!old_oos) {
@@ -1351,6 +1392,17 @@ ipx_parser_process(ipx_parser_t *parser, ipx_msg_ipfix_t **ipfix, ipx_msg_garbag
 
     *garbage = garbage_msg;
     return IPX_OK;
+}
+
+int
+ipx_parser_process(ipx_parser_t *parser, ipx_msg_ipfix_t **ipfix, ipx_msg_garbage_t **garbage)
+{
+    ipx_metric_add(parser->m.msgs, 1);
+    int rc = parser_process(parser, ipfix, garbage);
+    if (rc != IPX_OK) {
+        ipx_metric_add(parser->m.msgs_dropped, 1);
+    }
+    return rc;
 }
 
 int

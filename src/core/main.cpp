@@ -46,6 +46,7 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <cinttypes>
+#include <ctime>
 
 #include <ipfixcol2.h>
 #include <iostream>
@@ -206,6 +207,9 @@ int main(int argc, char *argv[])
     bool list_only = false;
     ipx_configurator configurator;
 
+    // Logs go to stdout; keep them readable line by line when it is a pipe (journald)
+    setvbuf(stdout, nullptr, _IOLBF, 0);
+
     // Parse configuration
     int opt;
     opterr = 0; // Disable default error messages
@@ -289,6 +293,16 @@ int main(int argc, char *argv[])
     if (pid_file != nullptr && pid_create(pid_file) != IPX_OK) {
         pid_file = nullptr; // Prevent removing the file
     }
+
+    const struct ipx_metric_label build_labels[] = {
+        {"version", IPX_BUILD_VERSION_FULL_STR},
+        {"git_hash", IPX_BUILD_GIT_HASH},
+        {"build_type", IPX_BUILD_TYPE},
+    };
+    ipx_metric_set(ipx_metric_new(IPX_METRIC_GAUGE, "ipfixcol2_build_info",
+        "Build information (always 1)", build_labels, 3), 1);
+    ipx_metric_set(ipx_metric_new(IPX_METRIC_GAUGE, "ipfixcol2_start_time_seconds",
+        "Start time of the process (Unix time)", nullptr, 0), (uint64_t) time(nullptr));
 
     // Create a configuration controller and use it to start the collector
     int rc;

@@ -43,6 +43,7 @@
 #include <stdarg.h>
 #include <syslog.h>
 #include <stdbool.h>
+#include <pthread.h>
 
 #include <ipfixcol2.h>
 #include "build_config.h"
@@ -112,9 +113,38 @@ ipx_verb_level2syslog(const enum ipx_verb_level level)
     return LOG_ERR;
 }
 
+static ipx_metric_t *log_metrics[IPX_VERB_DEBUG + 1];
+static pthread_once_t log_metrics_once = PTHREAD_ONCE_INIT;
+
+static void
+log_metrics_init(void)
+{
+    static const char *names[] = {
+        [IPX_VERB_ERROR]   = "error",
+        [IPX_VERB_WARNING] = "warning",
+        [IPX_VERB_INFO]    = "info",
+        [IPX_VERB_DEBUG]   = "debug"
+    };
+    for (int i = IPX_VERB_ERROR; i <= IPX_VERB_DEBUG; ++i) {
+        struct ipx_metric_label lbl = {"level", names[i]};
+        log_metrics[i] = ipx_metric_new(IPX_METRIC_COUNTER, "ipfixcol2_log_messages_total",
+            "Log messages printed, by level", &lbl, 1);
+    }
+}
+
+static void
+log_count(enum ipx_verb_level level)
+{
+    pthread_once(&log_metrics_once, log_metrics_init);
+    if (level >= IPX_VERB_ERROR && level <= IPX_VERB_DEBUG) {
+        ipx_metric_add(log_metrics[level], 1);
+    }
+}
+
 void
 ipx_verb_ctx_print(enum ipx_verb_level level, const ipx_ctx_t *ctx, const char *fmt, ...)
 {
+    log_count(level);
     static const char *err_inter = "<internal error - failed to format a message>\n";
     static const char *fmt_pattern[] = {
         [IPX_VERB_ERROR]   = "ERROR: %s: %s\n",
@@ -156,6 +186,7 @@ ipx_verb_ctx_print(enum ipx_verb_level level, const ipx_ctx_t *ctx, const char *
 void
 ipx_verb_print(enum ipx_verb_level level, const char *fmt, ...)
 {
+    log_count(level);
     va_list ap;
 
     va_start(ap, fmt);

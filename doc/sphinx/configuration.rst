@@ -161,6 +161,30 @@ See documentation of your exporters how to configure exported ODID. It is recomm
 ODIDs are unique per exporter. Note: In case of NetFlow devices, ODID is often referred as
 "Source ID".
 
+Metrics
+-------
+
+The collector can expose its metrics in the Prometheus text format. Add an *optional*
+``<metrics>`` section to the startup configuration and the collector serves ``GET /metrics``
+on the given address as long as it runs. Without the section no endpoint is opened.
+
+.. code-block:: xml
+
+    <ipfixcol2>
+        ...
+        <metrics>
+            <listen>127.0.0.1:9739</listen>   <!-- "host:port" or "[ipv6]:port" -->
+        </metrics>
+    </ipfixcol2>
+
+The collector fails to start when the address cannot be bound. The endpoint reports counters
+of the core (log messages by level, ring buffer fill and writer waits per instance) and of the
+plugins that register their own metrics (for example, the UDP input reports received and invalid
+datagrams and the kernel socket drops; the IPFIX parser reports parsed messages and records,
+sequence number gaps and skipped sets). Every plugin metric carries the labels ``ipx_instance``
+(the instance name from the configuration) and ``ipx_plugin``. Plugin authors register metrics
+with ``ipx_ctx_metric_new()`` from ``<ipfixcol2/metrics.h>``.
+
 Example configuration files
 ---------------------------
 

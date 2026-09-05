@@ -44,6 +44,7 @@
 #include <pthread.h>
 #include <time.h>
 
+#include <ipfixcol2.h>
 #include "ring.h"
 #include "verbose.h"
 
@@ -174,6 +175,10 @@ struct ipx_ring {
     bool               mw_mode;
     /** Ring data (array of pointers)                   */
     ipx_msg_t        **data;
+    /** Writer waits on a full ring (NULL until set)    */
+    ipx_metric_t      *m_waits;
+    /** Messages in the ring (NULL until set)           */
+    ipx_metric_t      *m_fill;
 };
 
 ipx_ring_t *
@@ -188,6 +193,7 @@ ipx_ring_init(uint32_t size, bool mw_mode)
         return NULL;
     }
 
+    ring->m_waits = ring->m_fill = NULL;
     ring->data = aligned_alloc(alignof(*ring->data), sizeof(*ring->data) * size);
     if (!ring->data) {
         IPX_ERROR(module, "aligned_alloc() failed! (%s:%d)", __FILE__, __LINE__);
@@ -333,6 +339,8 @@ ipx_ring_begin(ipx_ring_t *ring)
     ring->writer.exchange_idx = ring->sync.write_idx;
     while (ring->writer.exchange_idx - ring->writer.write_idx == 0) {
         // After sync the buffer is still full, try again later
+        ipx_metric_set(ring->m_fill, ring->writer.size);
+        ipx_metric_add(ring->m_waits, 1);
         pthread_cond_signal(&ring->sync.cond_reader);
         ring_cond_timedwait(&ring->sync.cond_writer, &ring->sync.mutex, 10);
         ring->writer.exchange_idx = ring->sync.write_idx;
@@ -370,6 +378,7 @@ ipx_ring_commit(ipx_ring_t *ring)
         ring->writer.write_commit_idx = new_idx;
         pthread_cond_signal(&ring->sync.cond_reader);
         pthread_mutex_unlock(&ring->sync.mutex);
+        ipx_metric_set(ring->m_fill, ring->writer.size - (ring->writer.exchange_idx - new_idx));
     }
 }
 
@@ -416,6 +425,7 @@ ipx_ring_pop(ipx_ring_t *ring)
         ring->reader.read_commit_idx = ring->reader.read_idx;
         pthread_cond_signal(&ring->sync.cond_writer);
         pthread_mutex_unlock(&ring->sync.mutex);
+        ipx_metric_set(ring->m_fill, ring->reader.exchange_idx - ring->reader.read_idx);
     }
 
     if (ring->reader.exchange_idx - ring->reader.read_idx > 0) {
@@ -457,4 +467,16 @@ void
 ipx_ring_mw_mode(ipx_ring_t *ring, bool mode)
 {
     ring->mw_mode = mode;
+}
+void
+ipx_ring_metrics_set(ipx_ring_t *ring, const char *reader)
+{
+    const struct ipx_metric_label lbl = {"ipx_instance", reader};
+    ring->m_waits = ipx_metric_new(IPX_METRIC_COUNTER, "ipfixcol2_ring_writer_waits_total",
+        "10 ms waits of a writer on the full ring buffer in front of the instance", &lbl, 1);
+    ring->m_fill = ipx_metric_new(IPX_METRIC_GAUGE, "ipfixcol2_ring_fill",
+        "Messages waiting in the ring buffer in front of the instance (updated on sync)",
+        &lbl, 1);
+    ipx_metric_set(ipx_metric_new(IPX_METRIC_GAUGE, "ipfixcol2_ring_size",
+        "Capacity of the ring buffer in front of the instance", &lbl, 1), ring->writer.size);
 }

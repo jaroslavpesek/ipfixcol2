@@ -44,6 +44,7 @@
 #include <iostream>
 #include <string>
 #include <cstdlib>
+#include <stdexcept>
 #include <dlfcn.h>
 #include <signal.h>
 #include <sys/time.h>
@@ -371,6 +372,7 @@ void ipx_configurator::cleanup()
     m_running_inter.clear();
     m_running_outputs.clear();
 
+    ipx_metrics_stop();
     IPX_DEBUG(comp_str, "Cleanup complete!", '\0');
 }
 
@@ -584,6 +586,11 @@ ipx_configurator::periodic_send_msg(uint32_t *periodic_message_sequence)
         ipx_fpipe_write(input->get_feedback(), ipx_msg_periodic2base(msg));
     }
     (*periodic_message_sequence)++;
+
+    static ipx_metric_t *cnt = ipx_metric_new(IPX_METRIC_COUNTER,
+        "ipfixcol2_periodic_messages_total",
+        "Periodic messages sent to the input plugins (10 per second while running)", nullptr, 0);
+    ipx_metric_add(cnt, 1);
 }
 
 int
@@ -598,6 +605,11 @@ ipx_configurator::run(ipx_controller *ctrl)
     try {
         ipx_config_model model = ctrl->model_get();
         startup(model);
+        if (!model.metrics_listen.empty()
+                && ipx_metrics_start(model.metrics_listen.c_str()) != IPX_OK) {
+            throw std::runtime_error("Failed to start the metrics endpoint on '"
+                + model.metrics_listen + "'");
+        }
     } catch (const std::exception &ex) {
         msg = ex.what();
         status = ipx_controller::OP_STATUS::FAILED;

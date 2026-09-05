@@ -123,6 +123,14 @@ IPX_API void
 ipx_ring_mw_mode(ipx_ring_t *ring, bool mode);
 
 /**
+ * \brief Register the ring metrics, labeled with the name of the instance that reads the ring
+ * \param[in] ring   Ring buffer
+ * \param[in] reader Name of the reader instance
+ */
+IPX_API void
+ipx_ring_metrics_set(ipx_ring_t *ring, const char *reader);
+
+/**
  * @}
  */
 
